@@ -12,7 +12,6 @@ anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
 env_logger = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true, features = [
     "macros",
@@ -21,7 +20,10 @@ tokio = { workspace = true, features = [
     "net",
     "signal",
 ] }
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive", "help", "usage"] }
+nix = { workspace = true, features = ["process", "resource", "signal"] }
+which = { workspace = true }
+
 [build-dependencies]
 anyhow = { workspace = true }
 aya-build = { workspace = true }

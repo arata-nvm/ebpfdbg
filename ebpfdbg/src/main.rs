@@ -1,13 +1,29 @@
+use std::{ffi::CString, path::PathBuf};
+
 use aya::programs::UProbe;
 use clap::Parser;
-#[rustfmt::skip]
 use log::{debug, warn};
-use tokio::signal;
+use nix::{
+    sys::{
+        resource::{self, Resource},
+        signal::{self, Signal},
+        wait::waitpid,
+    },
+    unistd::{self, ForkResult, Pid},
+};
+use which::which;
 
 #[derive(Debug, Parser)]
+#[command(version, about, long_about = None)]
 struct Opt {
-    #[clap(short, long)]
-    pid: Option<u32>,
+    #[arg(short, long)]
+    target: Option<String>,
+    #[arg(short, long)]
+    func: String,
+
+    program: String,
+    #[arg(allow_hyphen_values = true)]
+    args: Vec<String>,
 }
 
 #[tokio::main]
@@ -18,13 +34,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
-    let rlim = libc::rlimit {
-        rlim_cur: libc::RLIM_INFINITY,
-        rlim_max: libc::RLIM_INFINITY,
-    };
-    let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) };
-    if ret != 0 {
-        debug!("remove limit on locked memory failed, ret is: {ret}");
+    if let Err(e) = resource::setrlimit(
+        Resource::RLIMIT_MEMLOCK,
+        resource::RLIM_INFINITY,
+        resource::RLIM_INFINITY,
+    ) {
+        debug!("remove limit on locked memory failed, err is: {e}");
     }
 
     // This will include your eBPF object file as raw bytes at compile-time and load it at
@@ -52,15 +67,41 @@ async fn main() -> anyhow::Result<()> {
             });
         }
     }
-    let Opt { pid } = opt;
-    let program: &mut UProbe = ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
-    program.load()?;
-    program.attach("execve", "libc", pid)?;
 
-    let ctrl_c = signal::ctrl_c();
-    println!("Waiting for Ctrl-C...");
-    ctrl_c.await?;
-    println!("Exiting...");
+    let Opt {
+        target,
+        func,
+        program,
+        args,
+    } = opt;
+
+    let target = match target {
+        Some(target) => PathBuf::from(target),
+        None => which(&program)?,
+    };
+
+    let program = CString::new(program)?;
+    let mut args: Vec<CString> = args
+        .into_iter()
+        .map(CString::new)
+        .collect::<Result<_, _>>()?;
+    args.insert(0, program.clone());
+
+    match unsafe { unistd::fork() }? {
+        ForkResult::Child => {
+            signal::kill(Pid::this(), Signal::SIGSTOP)?;
+            unistd::execvp(&program, &args)?;
+            unreachable!();
+        }
+        ForkResult::Parent { child } => {
+            let uprobe: &mut UProbe = ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
+            uprobe.load()?;
+            uprobe.attach(func.as_str(), target, Some(child.as_raw() as u32))?;
+
+            signal::kill(child, Signal::SIGCONT)?;
+            waitpid(child, None)?;
+        }
+    }
 
     Ok(())
 }

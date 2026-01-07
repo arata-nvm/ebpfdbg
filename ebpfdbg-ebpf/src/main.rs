@@ -13,7 +13,7 @@ pub fn ebpfdbg(ctx: ProbeContext) -> u32 {
 }
 
 fn try_ebpfdbg(ctx: ProbeContext) -> Result<u32, u32> {
-    info!(&ctx, "function execve called by libc");
+    info!(&ctx, "function called");
     Ok(0)
 }
 
