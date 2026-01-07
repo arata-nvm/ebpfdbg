@@ -1,13 +1,14 @@
 use std::{ffi::CString, path::PathBuf};
 
-use aya::programs::UProbe;
+use aya::{maps::HashMap, programs::UProbe};
 use clap::Parser;
+use ebpfdbg_common::RegisterState;
 use log::{debug, warn};
 use nix::{
     sys::{
         resource::{self, Resource},
         signal::{self, Signal},
-        wait::waitpid,
+        wait::{WaitPidFlag, WaitStatus, waitpid},
     },
     unistd::{self, ForkResult, Pid},
 };
@@ -94,12 +95,28 @@ async fn main() -> anyhow::Result<()> {
             unreachable!();
         }
         ForkResult::Parent { child } => {
+            let pid = child.as_raw() as u32;
             let uprobe: &mut UProbe = ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
             uprobe.load()?;
-            uprobe.attach(func.as_str(), target, Some(child.as_raw() as u32))?;
+            uprobe.attach(func.as_str(), target, Some(pid))?;
 
-            signal::kill(child, Signal::SIGCONT)?;
-            waitpid(child, None)?;
+            let mut register_states: HashMap<_, u32, RegisterState> =
+                HashMap::try_from(ebpf.map_mut("REGISTER_STATES").unwrap())?;
+
+            loop {
+                signal::kill(child, Signal::SIGCONT)?;
+                match waitpid(child, Some(WaitPidFlag::WUNTRACED))? {
+                    WaitStatus::Stopped(_, _) => {
+                        let reg_state = register_states.get(&pid, 0)?;
+                        println!("Register state at function entry: {reg_state:#x?}");
+                        let _ = register_states.remove(&pid);
+                    }
+                    WaitStatus::Exited(_, _) | WaitStatus::Signaled(_, _, _) => {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
