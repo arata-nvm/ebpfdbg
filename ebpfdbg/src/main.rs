@@ -35,7 +35,7 @@ struct Opt {
 async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
