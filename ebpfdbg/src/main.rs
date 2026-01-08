@@ -1,12 +1,21 @@
-use std::path::PathBuf;
+use std::{
+    net::{TcpListener, TcpStream},
+    path::PathBuf,
+};
 
 use clap::Parser;
-use ebpfdbg::debugger::Debugger;
-use log::{debug, info};
-use nix::sys::{
-    resource::{self, Resource},
-    wait::WaitStatus,
+use ebpfdbg::debugger::{Debugger, StopReason};
+use gdbstub::{
+    common::Signal,
+    conn::Connection,
+    stub::{
+        GdbStub, SingleThreadStopReason,
+        run_blocking::{BlockingEventLoop, Event, WaitForStopReasonError},
+    },
+    target::Target,
 };
+use log::{debug, info};
+use nix::sys::resource::{self, Resource};
 use which::which;
 
 #[derive(Debug, Parser)]
@@ -26,7 +35,7 @@ struct Opt {
 async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
 
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -52,18 +61,56 @@ async fn main() -> anyhow::Result<()> {
 
     let mut debugger = Debugger::launch(program, args)?;
     debugger.add_breakpoint(target, &func)?;
-    loop {
-        match debugger.continue_exec()? {
-            WaitStatus::Stopped(_, _) => {
-                let reg_state = debugger.take_register_state()?;
-                info!("Register state at function entry: {reg_state:#x?}");
-            }
-            WaitStatus::Exited(_, _) | WaitStatus::Signaled(_, _, _) => {
-                break;
-            }
-            _ => {}
-        }
-    }
+
+    let conn = wait_for_tcp(9001)?;
+    let gdbstub = GdbStub::new(conn);
+    gdbstub.run_blocking::<GdbEventLoop>(&mut debugger)?;
 
     Ok(())
+}
+
+enum GdbEventLoop {}
+
+impl BlockingEventLoop for GdbEventLoop {
+    type Target = Debugger;
+    type Connection = TcpStream;
+    type StopReason = SingleThreadStopReason<u64>;
+
+    fn wait_for_stop_reason(
+        target: &mut Self::Target,
+        _conn: &mut Self::Connection,
+    ) -> Result<
+        Event<Self::StopReason>,
+        WaitForStopReasonError<
+            <Self::Target as Target>::Error,
+            <Self::Connection as Connection>::Error,
+        >,
+    > {
+        let stop_reason = match target
+            .continue_exec()
+            .map_err(WaitForStopReasonError::Target)?
+        {
+            StopReason::Exited(status) => SingleThreadStopReason::Exited(status),
+            StopReason::Signaled(signal) => SingleThreadStopReason::Signal(Signal(signal as u8)),
+            StopReason::Stopped(signal) => SingleThreadStopReason::Signal(Signal(signal as u8)),
+        };
+        Ok(Event::TargetStopped(stop_reason))
+    }
+
+    fn on_interrupt(
+        _target: &mut Self::Target,
+    ) -> Result<Option<Self::StopReason>, <Self::Target as Target>::Error> {
+        unimplemented!();
+    }
+}
+
+fn wait_for_tcp(port: u16) -> anyhow::Result<TcpStream> {
+    let sockaddr = format!("127.0.0.1:{port}");
+    info!("Waiting for a GDB connection on {sockaddr}...");
+
+    let sock = TcpListener::bind(sockaddr)?;
+    let (stream, addr) = sock.accept()?;
+    info!("Debugger connected from {addr}");
+
+    Ok(stream)
 }

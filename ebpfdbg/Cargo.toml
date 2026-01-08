@@ -21,8 +21,10 @@ tokio = { workspace = true, features = [
     "signal",
 ] }
 clap = { workspace = true, features = ["derive", "help", "usage"] }
-nix = { workspace = true, features = ["process", "resource", "signal"] }
+nix = { workspace = true, features = ["process", "resource", "signal", "uio"] }
 which = { workspace = true }
+gdbstub = { workspace = true, features = ["std"] }
+gdbstub_arch = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

@@ -1,18 +1,33 @@
-use std::{ffi::CString, path::Path};
+use std::{ffi::CString, io::IoSliceMut, path::Path};
 
 use aya::{maps::HashMap, programs::UProbe};
 use ebpfdbg_common::RegisterState;
+use gdbstub::target::{
+    Target, TargetError,
+    ext::base::singlethread::{SingleThreadBase, SingleThreadResume, SingleThreadResumeOps},
+};
 use nix::{
     sys::{
         signal::{self, Signal},
+        uio::{self, RemoteIoVec},
         wait::{self, WaitPidFlag, WaitStatus},
     },
     unistd::{self, ForkResult, Pid},
 };
 
+#[derive(Debug)]
 pub struct Debugger {
     pid: Pid,
     ebpf: aya::Ebpf,
+
+    last_register_state: RegisterState,
+}
+
+#[derive(Debug)]
+pub enum StopReason {
+    Exited(u8),
+    Signaled(Signal),
+    Stopped(Signal),
 }
 
 impl Debugger {
@@ -22,7 +37,11 @@ impl Debugger {
             "/ebpfdbg"
         )))?;
 
-        Ok(Self { pid, ebpf })
+        Ok(Self {
+            pid,
+            ebpf,
+            last_register_state: Default::default(),
+        })
     }
 
     pub fn launch(program: String, args: Vec<String>) -> anyhow::Result<Self> {
@@ -56,18 +75,111 @@ impl Debugger {
         Ok(())
     }
 
-    pub fn continue_exec(&mut self) -> anyhow::Result<WaitStatus> {
+    pub fn continue_exec(&mut self) -> anyhow::Result<StopReason> {
         signal::kill(self.pid, Signal::SIGCONT)?;
         let status = wait::waitpid(self.pid, Some(WaitPidFlag::WUNTRACED))?;
-        Ok(status)
+
+        self.save_register_state()?;
+
+        match status {
+            WaitStatus::Exited(_, status) => Ok(StopReason::Exited(status as u8)),
+            WaitStatus::Signaled(_, signal, _) => Ok(StopReason::Signaled(signal)),
+            WaitStatus::Stopped(_, signal) => Ok(StopReason::Stopped(signal)),
+            _ => unimplemented!("{status:?}"),
+        }
     }
 
-    pub fn take_register_state(&mut self) -> anyhow::Result<RegisterState> {
+    pub fn save_register_state(&mut self) -> anyhow::Result<()> {
         let pid = self.pid_raw();
         let mut register_states: HashMap<_, u32, RegisterState> =
             HashMap::try_from(self.ebpf.map_mut("REGISTER_STATES").unwrap())?;
-        let reg_state = register_states.get(&pid, 0)?;
+        self.last_register_state = register_states.get(&pid, 0)?;
         let _ = register_states.remove(&pid);
-        Ok(reg_state)
+        Ok(())
+    }
+}
+
+impl Target for Debugger {
+    type Arch = gdbstub_arch::x86::X86_64_SSE;
+    type Error = anyhow::Error;
+
+    fn base_ops(&mut self) -> gdbstub::target::ext::base::BaseOps<'_, Self::Arch, Self::Error> {
+        gdbstub::target::ext::base::BaseOps::SingleThread(self)
+    }
+
+    fn guard_rail_implicit_sw_breakpoints(&self) -> bool {
+        true
+    }
+}
+
+impl SingleThreadBase for Debugger {
+    fn read_registers(
+        &mut self,
+        regs: &mut <Self::Arch as gdbstub::arch::Arch>::Registers,
+    ) -> gdbstub::target::TargetResult<(), Self> {
+        regs.regs[0] = self.last_register_state.rax;
+        regs.regs[1] = self.last_register_state.rbx;
+        regs.regs[2] = self.last_register_state.rcx;
+        regs.regs[3] = self.last_register_state.rdx;
+        regs.regs[4] = self.last_register_state.rsi;
+        regs.regs[5] = self.last_register_state.rdi;
+        regs.regs[6] = self.last_register_state.rbp;
+        regs.regs[7] = self.last_register_state.rsp;
+        regs.regs[8] = self.last_register_state.r8;
+        regs.regs[9] = self.last_register_state.r9;
+        regs.regs[10] = self.last_register_state.r10;
+        regs.regs[11] = self.last_register_state.r11;
+        regs.regs[12] = self.last_register_state.r12;
+        regs.regs[13] = self.last_register_state.r13;
+        regs.regs[14] = self.last_register_state.r14;
+        regs.regs[15] = self.last_register_state.r15;
+
+        regs.eflags = self.last_register_state.eflags as u32;
+        regs.rip = self.last_register_state.rip;
+        regs.segments.cs = self.last_register_state.cs as u32;
+        regs.segments.ss = self.last_register_state.ss as u32;
+
+        Ok(())
+    }
+
+    fn write_registers(
+        &mut self,
+        _regs: &<Self::Arch as gdbstub::arch::Arch>::Registers,
+    ) -> gdbstub::target::TargetResult<(), Self> {
+        unimplemented!();
+    }
+
+    fn read_addrs(
+        &mut self,
+        start_addr: <Self::Arch as gdbstub::arch::Arch>::Usize,
+        data: &mut [u8],
+    ) -> gdbstub::target::TargetResult<usize, Self> {
+        let remote_iov = RemoteIoVec {
+            base: start_addr as usize,
+            len: data.len(),
+        };
+        let local_iov = IoSliceMut::new(data);
+        let nread = uio::process_vm_readv(self.pid, &mut [local_iov], &[remote_iov])
+            .map_err(|e| TargetError::Errno(e as u8))?;
+
+        Ok(nread)
+    }
+
+    fn write_addrs(
+        &mut self,
+        _start_addr: <Self::Arch as gdbstub::arch::Arch>::Usize,
+        _data: &[u8],
+    ) -> gdbstub::target::TargetResult<(), Self> {
+        unimplemented!();
+    }
+
+    fn support_resume(&mut self) -> Option<SingleThreadResumeOps<'_, Self>> {
+        Some(self)
+    }
+}
+
+impl SingleThreadResume for Debugger {
+    fn resume(&mut self, _signal: Option<gdbstub::common::Signal>) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
