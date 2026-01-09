@@ -63,7 +63,7 @@ impl Debugger {
                     .map(CString::new)
                     .collect::<Result<_, _>>()?;
                 args.insert(0, program.clone());
-                unistd::execvp(&program, &args)?;
+                unistd::execv(&program, &args)?;
 
                 unreachable!();
             }
