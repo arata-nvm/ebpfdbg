@@ -24,7 +24,7 @@ struct Opt {
     #[arg(short, long)]
     target: Option<String>,
     #[arg(short, long)]
-    func: String,
+    func: Vec<String>,
 
     program: String,
     #[arg(allow_hyphen_values = true)]
@@ -60,7 +60,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut debugger = Debugger::launch(program, args)?;
-    debugger.add_breakpoint(target, &func)?;
+    for f in func {
+        debugger.add_breakpoint(&target, &f)?;
+    }
 
     let conn = wait_for_tcp(9001)?;
     let gdbstub = GdbStub::new(conn);

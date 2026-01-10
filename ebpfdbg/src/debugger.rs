@@ -61,10 +61,13 @@ pub enum StopReason {
 
 impl Debugger {
     pub fn new(pid: Pid) -> anyhow::Result<Self> {
-        let ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
+        let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
             "/ebpfdbg"
         )))?;
+
+        let uprobe: &mut UProbe = ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
+        uprobe.load()?;
 
         Ok(Self {
             pid,
@@ -99,7 +102,6 @@ impl Debugger {
     pub fn add_breakpoint(&mut self, target: impl AsRef<Path>, func: &str) -> anyhow::Result<()> {
         let pid = self.pid_raw();
         let uprobe: &mut UProbe = self.ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
-        uprobe.load()?;
         uprobe.attach(func, target, Some(pid))?;
         Ok(())
     }
