@@ -1,3 +1,4 @@
+pub mod auxv;
 pub mod base_ops;
 pub mod exec_file;
 pub mod extended_mode;
