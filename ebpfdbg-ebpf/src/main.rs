@@ -2,13 +2,16 @@
 #![no_main]
 
 use aya_ebpf::{
-    helpers::{bpf_get_current_pid_tgid, generated::bpf_send_signal},
+    helpers::{
+        bpf_get_current_pid_tgid, bpf_probe_read_kernel,
+        generated::{bpf_get_current_task, bpf_send_signal},
+    },
     macros::{map, uprobe},
     maps::HashMap,
     programs::ProbeContext,
 };
-use aya_log_ebpf::info;
 use ebpfdbg_common::RegisterState;
+use ebpfdbg_ebpf::vmlinux::{task_struct, thread_struct};
 
 #[map]
 static REGISTER_STATES: HashMap<u32, RegisterState> = HashMap::with_max_entries(1024, 0);
@@ -24,7 +27,17 @@ pub fn ebpfdbg(ctx: ProbeContext) -> u32 {
 }
 
 fn try_ebpfdbg(ctx: ProbeContext) -> Result<u32, u32> {
-    info!(&ctx, "function called");
+    let task: *const task_struct = unsafe { bpf_get_current_task() } as *const task_struct;
+    let thread = unsafe {
+        bpf_probe_read_kernel::<*const thread_struct>(
+            &(&(*task).thread as *const _) as *const *const _,
+        )
+    }
+    .map_err(|e| e as u32)?;
+    let es = unsafe { bpf_probe_read_kernel(&(*thread).es) }.map_err(|e| e as u32)?;
+    let ds = unsafe { bpf_probe_read_kernel(&(*thread).ds) }.map_err(|e| e as u32)?;
+    let fsbase = unsafe { bpf_probe_read_kernel(&(*thread).fsbase) }.map_err(|e| e as u32)?;
+    let gsbase = unsafe { bpf_probe_read_kernel(&(*thread).gsbase) }.map_err(|e| e as u32)?;
     let regs = unsafe { *ctx.regs };
     let state = RegisterState {
         r15: regs.r15,
@@ -48,6 +61,10 @@ fn try_ebpfdbg(ctx: ProbeContext) -> Result<u32, u32> {
         eflags: regs.eflags,
         rsp: regs.rsp,
         ss: regs.ss,
+        es,
+        ds,
+        fsbase,
+        gsbase,
     };
 
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;

@@ -24,6 +24,10 @@ pub struct RegisterState {
     pub eflags: u64,
     pub rsp: u64,
     pub ss: u64,
+    pub es: u16,
+    pub ds: u16,
+    pub fsbase: u64,
+    pub gsbase: u64,
 }
 
 #[cfg(feature = "user")]
