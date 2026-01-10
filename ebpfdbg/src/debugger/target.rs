@@ -1,6 +1,6 @@
 use gdbstub::target::{
     Target,
-    ext::{base::BaseOps, extended_mode::ExtendedModeOps, host_io::HostIoOps},
+    ext::{base::BaseOps, exec_file::ExecFileOps, extended_mode::ExtendedModeOps, host_io::HostIoOps},
 };
 
 use crate::{arch::X86_64_SSE_Segments, debugger::Debugger};
@@ -11,6 +11,10 @@ impl Target for Debugger {
 
     fn base_ops(&mut self) -> BaseOps<'_, Self::Arch, Self::Error> {
         BaseOps::SingleThread(self)
+    }
+
+    fn support_exec_file(&mut self) -> Option<ExecFileOps<'_, Self>> {
+        Some(self)
     }
 
     fn support_extended_mode(&mut self) -> Option<ExtendedModeOps<'_, Self>> {
