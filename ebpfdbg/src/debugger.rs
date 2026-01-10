@@ -3,7 +3,7 @@ pub mod extended_mode;
 pub mod host_io;
 pub mod target;
 
-use std::{ffi::CString, path::Path};
+use std::{ffi::CString, os::unix::ffi::OsStrExt, path::Path};
 
 use aya::{maps::HashMap, programs::UProbe};
 use ebpfdbg_common::RegisterState;
@@ -18,6 +18,7 @@ use nix::{
 
 #[derive(Debug)]
 pub struct Debugger {
+    exec_file: String,
     pid: Pid,
     ebpf: aya::Ebpf,
 
@@ -32,7 +33,7 @@ pub enum StopReason {
 }
 
 impl Debugger {
-    pub fn new(pid: Pid) -> anyhow::Result<Self> {
+    pub fn new(exec_file: impl AsRef<Path>, pid: Pid) -> anyhow::Result<Self> {
         let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
             "/ebpfdbg"
@@ -41,19 +42,24 @@ impl Debugger {
         let uprobe: &mut UProbe = ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
         uprobe.load()?;
 
+        let exec_file = exec_file.as_ref().canonicalize()?;
         Ok(Self {
+            exec_file: exec_file.into_os_string().into_string().map_err(|path| {
+                anyhow::anyhow!("failed to convert exec_file path to string: {:?}", path)
+            })?,
             pid,
             ebpf,
             last_register_state: Default::default(),
         })
     }
 
-    pub fn launch(program: String, args: Vec<String>) -> anyhow::Result<Self> {
+    pub fn launch(exec_file: impl AsRef<Path>, args: Vec<String>) -> anyhow::Result<Self> {
+        let exec_file = exec_file.as_ref();
         match unsafe { unistd::fork() }? {
             ForkResult::Child => {
                 signal::kill(Pid::this(), Signal::SIGSTOP)?;
 
-                let program = CString::new(program)?;
+                let program = CString::new(exec_file.as_os_str().as_bytes())?;
                 let mut args: Vec<CString> = args
                     .into_iter()
                     .map(CString::new)
@@ -63,7 +69,7 @@ impl Debugger {
 
                 unreachable!();
             }
-            ForkResult::Parent { child } => Self::new(child),
+            ForkResult::Parent { child } => Self::new(exec_file, child),
         }
     }
 
