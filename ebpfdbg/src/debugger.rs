@@ -110,12 +110,13 @@ impl Debugger {
         signal::kill(self.pid, Signal::SIGCONT)?;
         let status = wait::waitpid(self.pid, Some(WaitPidFlag::WUNTRACED))?;
 
-        self.save_register_state()?;
-
         match status {
             WaitStatus::Exited(_, status) => Ok(StopReason::Exited(status as u8)),
             WaitStatus::Signaled(_, signal, _) => Ok(StopReason::Signaled(signal)),
-            WaitStatus::Stopped(_, signal) => Ok(StopReason::Stopped(signal)),
+            WaitStatus::Stopped(_, signal) => {
+                self.save_register_state()?;
+                Ok(StopReason::Stopped(signal))
+            }
             _ => unimplemented!("{status:?}"),
         }
     }
