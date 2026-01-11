@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
     for f in func {
         debugger.add_breakpoint(&target, &f)?;
     }
+    let _ = debugger.continue_exec();
 
     let conn = wait_for_tcp(9001)?;
     let gdbstub = GdbStub::new(conn);

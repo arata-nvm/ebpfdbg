@@ -1,6 +1,9 @@
 use gdbstub::target::{
     Target,
-    ext::{auxv::AuxvOps, base::BaseOps, exec_file::ExecFileOps, extended_mode::ExtendedModeOps, host_io::HostIoOps, section_offsets::SectionOffsetsOps},
+    ext::{
+        auxv::AuxvOps, base::BaseOps, breakpoints::BreakpointsOps, exec_file::ExecFileOps,
+        extended_mode::ExtendedModeOps, host_io::HostIoOps, section_offsets::SectionOffsetsOps,
+    },
 };
 
 use crate::{arch::X86_64_SSE_Segments, debugger::Debugger};
@@ -14,6 +17,10 @@ impl Target for Debugger {
     }
 
     fn support_auxv(&mut self) -> Option<AuxvOps<'_, Self>> {
+        Some(self)
+    }
+
+    fn support_breakpoints(&mut self) -> Option<BreakpointsOps<'_, Self>> {
         Some(self)
     }
 
@@ -34,6 +41,6 @@ impl Target for Debugger {
     }
 
     fn guard_rail_implicit_sw_breakpoints(&self) -> bool {
-        true
+        false
     }
 }

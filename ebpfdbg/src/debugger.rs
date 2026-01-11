@@ -1,14 +1,18 @@
 pub mod auxv;
 pub mod base_ops;
+pub mod breakpoints;
 pub mod exec_file;
 pub mod extended_mode;
 pub mod host_io;
 pub mod section_offsets;
 pub mod target;
 
-use std::{ffi::CString, os::unix::ffi::OsStrExt, path::Path};
+use std::{collections::HashMap, ffi::CString, os::unix::ffi::OsStrExt, path::Path};
 
-use aya::{maps::HashMap, programs::UProbe};
+use aya::{
+    maps,
+    programs::{UProbe, uprobe::UProbeLinkId},
+};
 use ebpfdbg_common::RegisterState;
 use log::debug;
 use nix::{
@@ -19,6 +23,8 @@ use nix::{
     unistd::{self, ForkResult, Pid},
 };
 
+use crate::proc::find_target_and_offset;
+
 #[derive(Debug)]
 pub struct Debugger {
     exec_file: String,
@@ -26,6 +32,7 @@ pub struct Debugger {
     ebpf: aya::Ebpf,
 
     last_register_state: RegisterState,
+    breakpoints: HashMap<u64, UProbeLinkId>,
 }
 
 #[derive(Debug)]
@@ -53,6 +60,7 @@ impl Debugger {
             pid,
             ebpf,
             last_register_state: Default::default(),
+            breakpoints: HashMap::new(),
         })
     }
 
@@ -87,6 +95,30 @@ impl Debugger {
         Ok(())
     }
 
+    pub fn add_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+        let pid = self.pid_raw();
+        let (target, offset) = find_target_and_offset(self.pid, addr)?;
+        let uprobe: &mut UProbe = self.ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
+        let link_id = uprobe.attach(offset, target, Some(pid))?;
+        if self.breakpoints.contains_key(&addr) {
+            return Err(anyhow::anyhow!(
+                "breakpoint already set at address {addr:#x}"
+            ));
+        }
+        self.breakpoints.insert(addr, link_id);
+        Ok(())
+    }
+
+    pub fn remove_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+        let link_id = self
+            .breakpoints
+            .remove(&addr)
+            .ok_or_else(|| anyhow::anyhow!("no breakpoint set at address {addr:#x}"))?;
+        let uprobe: &mut UProbe = self.ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
+        uprobe.detach(link_id)?;
+        Ok(())
+    }
+
     pub fn continue_exec(&mut self) -> anyhow::Result<StopReason> {
         debug!("continue_exec()");
         signal::kill(self.pid, Signal::SIGCONT)?;
@@ -105,8 +137,8 @@ impl Debugger {
 
     pub fn save_register_state(&mut self) -> anyhow::Result<()> {
         let pid = self.pid_raw();
-        let mut register_states: HashMap<_, u32, RegisterState> =
-            HashMap::try_from(self.ebpf.map_mut("REGISTER_STATES").unwrap())?;
+        let mut register_states: maps::HashMap<_, u32, RegisterState> =
+            maps::HashMap::try_from(self.ebpf.map_mut("REGISTER_STATES").unwrap())?;
         self.last_register_state = register_states.get(&pid, 0)?;
         let _ = register_states.remove(&pid)?;
         debug!("Saved register state: {:?}", self.last_register_state);
