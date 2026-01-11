@@ -28,12 +28,7 @@ pub fn ebpfdbg(ctx: ProbeContext) -> u32 {
 
 fn try_ebpfdbg(ctx: ProbeContext) -> Result<u32, u32> {
     let task: *const task_struct = unsafe { bpf_get_current_task() } as *const task_struct;
-    let thread = unsafe {
-        bpf_probe_read_kernel::<*const thread_struct>(
-            &(&(*task).thread as *const _) as *const *const _,
-        )
-    }
-    .map_err(|e| e as u32)?;
+    let thread = unsafe { &(*task).thread } as *const thread_struct;
     let es = unsafe { bpf_probe_read_kernel(&(*thread).es) }.map_err(|e| e as u32)?;
     let ds = unsafe { bpf_probe_read_kernel(&(*thread).ds) }.map_err(|e| e as u32)?;
     let fsbase = unsafe { bpf_probe_read_kernel(&(*thread).fsbase) }.map_err(|e| e as u32)?;
