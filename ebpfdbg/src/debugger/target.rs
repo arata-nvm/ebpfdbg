@@ -1,6 +1,6 @@
 use gdbstub::target::{
     Target,
-    ext::{auxv::AuxvOps, base::BaseOps, exec_file::ExecFileOps, extended_mode::ExtendedModeOps, host_io::HostIoOps},
+    ext::{auxv::AuxvOps, base::BaseOps, exec_file::ExecFileOps, extended_mode::ExtendedModeOps, host_io::HostIoOps, section_offsets::SectionOffsetsOps},
 };
 
 use crate::{arch::X86_64_SSE_Segments, debugger::Debugger};
@@ -26,6 +26,10 @@ impl Target for Debugger {
     }
 
     fn support_host_io(&mut self) -> Option<HostIoOps<'_, Self>> {
+        Some(self)
+    }
+
+    fn support_section_offsets(&mut self) -> Option<SectionOffsetsOps<'_, Self>> {
         Some(self)
     }
 

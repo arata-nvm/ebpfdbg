@@ -3,6 +3,7 @@ pub mod base_ops;
 pub mod exec_file;
 pub mod extended_mode;
 pub mod host_io;
+pub mod section_offsets;
 pub mod target;
 
 use std::{ffi::CString, os::unix::ffi::OsStrExt, path::Path};
