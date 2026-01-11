@@ -4,6 +4,7 @@ use gdbstub::target::{
         Args, AttachKind, CurrentActivePid, CurrentActivePidOps, ExtendedMode, ShouldTerminate,
     },
 };
+use log::debug;
 
 use crate::debugger::Debugger;
 
@@ -39,6 +40,7 @@ impl ExtendedMode for Debugger {
 
 impl CurrentActivePid for Debugger {
     fn current_active_pid(&mut self) -> Result<gdbstub::common::Pid, Self::Error> {
+        debug!("current_active_pid()");
         gdbstub::common::Pid::new(self.pid.as_raw() as usize)
             .ok_or_else(|| anyhow::anyhow!("invalid pid"))
     }

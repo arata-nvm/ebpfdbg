@@ -5,6 +5,7 @@ use gdbstub::target::ext::host_io::{
     HostIoOpenMode, HostIoOpenOps, HostIoPread, HostIoPreadOps, HostIoReadlink, HostIoReadlinkOps,
     HostIoResult,
 };
+use log::debug;
 use nix::{
     fcntl::{self, OFlag},
     sys::{stat::Mode, uio},
@@ -38,6 +39,10 @@ impl HostIoOpen for Debugger {
         flags: HostIoOpenFlags,
         mode: HostIoOpenMode,
     ) -> HostIoResult<u32, Self> {
+        debug!(
+            "open(filename: {:?}, flags: {:?}, mode: {:?})",
+            filename, flags, mode
+        );
         let flags = OFlag::from_bits(flags.bits() as i32).expect("invalid flags");
         let mode = Mode::from_bits(mode.bits() as u32).expect("invalid mode");
         let fd =
@@ -49,6 +54,7 @@ impl HostIoOpen for Debugger {
 
 impl HostIoReadlink for Debugger {
     fn readlink(&mut self, filename: &[u8], buf: &mut [u8]) -> HostIoResult<usize, Self> {
+        debug!("readlink(filename: {:?})", filename);
         let path = fcntl::readlink(filename).map_err(|e| HostIoError::Errno(map_errno(e)))?;
         let path_bytes = path.as_encoded_bytes();
         let len = buf.len().min(path_bytes.len());
@@ -65,6 +71,7 @@ impl HostIoPread for Debugger {
         offset: u64,
         buf: &mut [u8],
     ) -> HostIoResult<usize, Self> {
+        debug!("pread(fd: {}, count: {}, offset: {})", fd, count, offset);
         let fd = unsafe { BorrowedFd::borrow_raw(fd as i32) };
         let nread = uio::pread(fd, &mut buf[..count], offset as i64)
             .map_err(|e| HostIoError::Errno(map_errno(e)))?;
@@ -74,6 +81,7 @@ impl HostIoPread for Debugger {
 
 impl HostIoClose for Debugger {
     fn close(&mut self, fd: u32) -> HostIoResult<(), Self> {
+        debug!("close(fd: {})", fd);
         unistd::close(fd as i32).map_err(|e| HostIoError::Errno(map_errno(e)))?;
         Ok(())
     }

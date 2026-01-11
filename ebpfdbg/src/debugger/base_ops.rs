@@ -11,6 +11,7 @@ use gdbstub::{
     },
 };
 use gdbstub_arch::x86::reg::id::{X86_64CoreRegId, X86SegmentRegId};
+use log::debug;
 use nix::sys::uio::{self, RemoteIoVec};
 
 use crate::{
@@ -23,6 +24,8 @@ impl SingleThreadBase for Debugger {
         &mut self,
         regs: &mut <Self::Arch as Arch>::Registers,
     ) -> TargetResult<(), Self> {
+        debug!("read_registers()");
+
         regs.core.regs[0] = self.last_register_state.rax;
         regs.core.regs[1] = self.last_register_state.rbx;
         regs.core.regs[2] = self.last_register_state.rcx;
@@ -57,6 +60,8 @@ impl SingleThreadBase for Debugger {
         &mut self,
         _regs: &<Self::Arch as Arch>::Registers,
     ) -> TargetResult<(), Self> {
+        debug!("write_registers()");
+
         unimplemented!();
     }
 
@@ -69,6 +74,12 @@ impl SingleThreadBase for Debugger {
         start_addr: <Self::Arch as Arch>::Usize,
         data: &mut [u8],
     ) -> TargetResult<usize, Self> {
+        debug!(
+            "read_addrs(start_addr: {:x}, size: {:x})",
+            start_addr,
+            data.len()
+        );
+
         let remote_iov = RemoteIoVec {
             base: start_addr as usize,
             len: data.len(),
@@ -82,9 +93,14 @@ impl SingleThreadBase for Debugger {
 
     fn write_addrs(
         &mut self,
-        _start_addr: <Self::Arch as Arch>::Usize,
-        _data: &[u8],
+        start_addr: <Self::Arch as Arch>::Usize,
+        data: &[u8],
     ) -> TargetResult<(), Self> {
+        debug!(
+            "write_addrs(start_addr: {:x}, data: {:x?})",
+            start_addr, data
+        );
+
         unimplemented!();
     }
 
@@ -100,6 +116,8 @@ impl SingleRegisterAccess<()> for Debugger {
         reg_id: <Self::Arch as Arch>::RegId,
         buf: &mut [u8],
     ) -> TargetResult<usize, Self> {
+        debug!("read_register(reg_id: {:?})", reg_id);
+
         let value = match reg_id {
             X86_64_SSE_SegmentsRegId::Core(X86_64CoreRegId::Gpr(id)) => match id {
                 0 => self.last_register_state.rax,
@@ -146,9 +164,11 @@ impl SingleRegisterAccess<()> for Debugger {
     fn write_register(
         &mut self,
         _tid: (),
-        _reg_id: <Self::Arch as Arch>::RegId,
-        _val: &[u8],
+        reg_id: <Self::Arch as Arch>::RegId,
+        val: &[u8],
     ) -> TargetResult<(), Self> {
+        debug!("write_register(reg_id: {:?}, val: {:x?})", reg_id, val);
+
         unimplemented!();
     }
 }

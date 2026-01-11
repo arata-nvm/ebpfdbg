@@ -87,6 +87,7 @@ impl Debugger {
     }
 
     pub fn continue_exec(&mut self) -> anyhow::Result<StopReason> {
+        debug!("continue_exec()");
         signal::kill(self.pid, Signal::SIGCONT)?;
         let status = wait::waitpid(self.pid, Some(WaitPidFlag::WUNTRACED))?;
 
