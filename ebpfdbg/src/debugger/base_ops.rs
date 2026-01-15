@@ -1,5 +1,3 @@
-use std::io::IoSliceMut;
-
 use gdbstub::{
     arch::Arch,
     target::{
@@ -11,8 +9,7 @@ use gdbstub::{
     },
 };
 use gdbstub_arch::x86::reg::id::{X86_64CoreRegId, X86SegmentRegId};
-use log::debug;
-use nix::sys::uio::{self, RemoteIoVec};
+use log::{debug, warn};
 
 use crate::{
     arch::{X86_64_SSE_SegmentsRegId, X86_64SegmentsRegId},
@@ -80,15 +77,10 @@ impl SingleThreadBase for Debugger {
             data.len()
         );
 
-        let remote_iov = RemoteIoVec {
-            base: start_addr as usize,
-            len: data.len(),
-        };
-        let local_iov = IoSliceMut::new(data);
-        let nread = uio::process_vm_readv(self.pid, &mut [local_iov], &[remote_iov])
-            .map_err(|e| TargetError::Errno(e as u8))?;
-
-        Ok(nread)
+        self.read_memory(start_addr as usize, data).map_err(|e| {
+            warn!("failed to read memory at {:x}: {:?}", start_addr, e);
+            TargetError::NonFatal
+        })
     }
 
     fn write_addrs(
@@ -101,7 +93,12 @@ impl SingleThreadBase for Debugger {
             start_addr, data
         );
 
-        unimplemented!();
+        self.write_memory(start_addr as usize, data).map_err(|e| {
+            warn!("failed to write memory at {:x}: {:?}", start_addr, e);
+            TargetError::NonFatal
+        })?;
+
+        Ok(())
     }
 
     fn support_resume(&mut self) -> Option<SingleThreadResumeOps<'_, Self>> {

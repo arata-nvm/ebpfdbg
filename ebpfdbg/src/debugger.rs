@@ -7,7 +7,13 @@ pub mod host_io;
 pub mod section_offsets;
 pub mod target;
 
-use std::{collections::HashMap, ffi::CString, os::unix::ffi::OsStrExt, path::Path};
+use std::{
+    collections::HashMap,
+    ffi::CString,
+    io::{IoSlice, IoSliceMut},
+    os::unix::ffi::OsStrExt,
+    path::Path,
+};
 
 use aya::{
     maps,
@@ -18,6 +24,7 @@ use log::debug;
 use nix::{
     sys::{
         signal::{self, Signal},
+        uio::{self, RemoteIoVec},
         wait::{self, WaitPidFlag, WaitStatus},
     },
     unistd::{self, ForkResult, Pid},
@@ -143,5 +150,27 @@ impl Debugger {
         let _ = register_states.remove(&pid)?;
         debug!("Saved register state: {:?}", self.last_register_state);
         Ok(())
+    }
+
+    pub fn read_memory(&mut self, start_addr: usize, data: &mut [u8]) -> anyhow::Result<usize> {
+        let remote_iov = RemoteIoVec {
+            base: start_addr,
+            len: data.len(),
+        };
+        let local_iov = IoSliceMut::new(data);
+        let nread = uio::process_vm_readv(self.pid, &mut [local_iov], &[remote_iov])?;
+
+        Ok(nread)
+    }
+
+    pub fn write_memory(&mut self, start_addr: usize, data: &[u8]) -> anyhow::Result<usize> {
+        let remote_iov = RemoteIoVec {
+            base: start_addr,
+            len: data.len(),
+        };
+        let local_iov = IoSlice::new(data);
+        let nwrite = uio::process_vm_writev(self.pid, &[local_iov], &[remote_iov])?;
+
+        Ok(nwrite)
     }
 }
