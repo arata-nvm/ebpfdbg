@@ -152,9 +152,9 @@ impl Debugger {
         Ok(())
     }
 
-    pub fn read_memory(&mut self, start_addr: usize, data: &mut [u8]) -> anyhow::Result<usize> {
+    pub fn read_memory(&mut self, start_addr: u64, data: &mut [u8]) -> anyhow::Result<usize> {
         let remote_iov = RemoteIoVec {
-            base: start_addr,
+            base: start_addr as usize,
             len: data.len(),
         };
         let local_iov = IoSliceMut::new(data);
@@ -163,9 +163,9 @@ impl Debugger {
         Ok(nread)
     }
 
-    pub fn write_memory(&mut self, start_addr: usize, data: &[u8]) -> anyhow::Result<usize> {
+    pub fn write_memory(&mut self, start_addr: u64, data: &[u8]) -> anyhow::Result<usize> {
         let remote_iov = RemoteIoVec {
-            base: start_addr,
+            base: start_addr as usize,
             len: data.len(),
         };
         let local_iov = IoSlice::new(data);

@@ -77,7 +77,7 @@ impl SingleThreadBase for Debugger {
             data.len()
         );
 
-        self.read_memory(start_addr as usize, data).map_err(|e| {
+        self.read_memory(start_addr, data).map_err(|e| {
             warn!("failed to read memory at {:x}: {:?}", start_addr, e);
             TargetError::NonFatal
         })
@@ -93,7 +93,7 @@ impl SingleThreadBase for Debugger {
             start_addr, data
         );
 
-        self.write_memory(start_addr as usize, data).map_err(|e| {
+        self.write_memory(start_addr, data).map_err(|e| {
             warn!("failed to write memory at {:x}: {:?}", start_addr, e);
             TargetError::NonFatal
         })?;
