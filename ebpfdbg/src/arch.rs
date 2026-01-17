@@ -128,7 +128,7 @@ impl RegId for X86_64_SSE_SegmentsRegId {
                 Self::Segments(X86_64SegmentsRegId::GsBase),
                 Some(NonZeroUsize::new(8)?),
             )),
-            _ => return None,
+            _ => None,
         }
     }
 }

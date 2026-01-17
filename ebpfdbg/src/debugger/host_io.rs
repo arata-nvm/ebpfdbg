@@ -44,7 +44,7 @@ impl HostIoOpen for Debugger {
             filename, flags, mode
         );
         let flags = OFlag::from_bits(flags.bits() as i32).expect("invalid flags");
-        let mode = Mode::from_bits(mode.bits() as u32).expect("invalid mode");
+        let mode = Mode::from_bits(mode.bits()).expect("invalid mode");
         let fd =
             fcntl::open(filename, flags, mode).map_err(|e| HostIoError::Errno(map_errno(e)))?;
         let fd = fd.into_raw_fd();

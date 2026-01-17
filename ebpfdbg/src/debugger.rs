@@ -211,7 +211,7 @@ impl Debugger {
             .build()?;
         let insns = cs.disasm_count(&code, pc, 1)?;
         let insn = insns
-            .get(0)
+            .first()
             .ok_or_else(|| anyhow::anyhow!("no instruction at pc"))?;
 
         let detail = cs.insn_detail(insn)?;
@@ -229,15 +229,15 @@ impl Debugger {
         let fallthrough_pc = pc + insn.len() as u64;
 
         let is_member_of =
-            |group: c_uint| -> bool { detail.groups().into_iter().any(|grp| grp.0 == group as u8) };
+            |group: c_uint| -> bool { detail.groups().iter().any(|grp| grp.0 == group as u8) };
         if is_member_of(X86InsnGroup::X86_GRP_RET) {
             let sp = self.last_register_state.rsp;
-            return self.read_u64(sp);
+            self.read_u64(sp)
         } else if is_member_of(X86InsnGroup::X86_GRP_CALL) {
-            common::resolve_call_jump_target(operands, &self, fallthrough_pc)
+            common::resolve_call_jump_target(operands, self, fallthrough_pc)
         } else if is_member_of(X86InsnGroup::X86_GRP_JUMP) {
             if common::check_jump_condition(mnemonic, &self.last_register_state) {
-                let target_pc = common::resolve_call_jump_target(operands, &self, fallthrough_pc)?;
+                let target_pc = common::resolve_call_jump_target(operands, self, fallthrough_pc)?;
                 Ok(target_pc)
             } else {
                 Ok(fallthrough_pc)

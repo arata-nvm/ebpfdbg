@@ -9,8 +9,8 @@ pub struct EbpfProgram(Ebpf);
 #[derive(Debug)]
 pub struct UProbeLinkId(aya::programs::uprobe::UProbeLinkId);
 
-const PROGRAM_UPROBE_HANDLER: &'static str = "uprobe_handler";
-const MAP_REGISTER_STATES: &'static str = "REGISTER_STATES";
+const PROGRAM_UPROBE_HANDLER: &str = "uprobe_handler";
+const MAP_REGISTER_STATES: &str = "REGISTER_STATES";
 
 impl EbpfProgram {
     pub fn load() -> anyhow::Result<Self> {
@@ -66,7 +66,7 @@ impl EbpfProgram {
         let mut register_states: HashMap<_, u32, RegisterState> =
             HashMap::try_from(self.0.map_mut(MAP_REGISTER_STATES).unwrap())?;
         let last_register_state = register_states.get(&pid, 0)?;
-        let _ = register_states.remove(&pid)?;
+        register_states.remove(&pid)?;
         Ok(last_register_state)
     }
 }
