@@ -1,10 +1,14 @@
 use gdbstub::{
     arch::Arch,
+    common::Signal,
     target::{
         TargetError, TargetResult,
         ext::base::{
             single_register_access::{SingleRegisterAccess, SingleRegisterAccessOps},
-            singlethread::{SingleThreadBase, SingleThreadResume, SingleThreadResumeOps},
+            singlethread::{
+                SingleThreadBase, SingleThreadResume, SingleThreadResumeOps,
+                SingleThreadSingleStep, SingleThreadSingleStepOps,
+            },
         },
     },
 };
@@ -14,6 +18,7 @@ use log::{debug, warn};
 use crate::{
     arch::{X86_64_SSE_SegmentsRegId, X86_64SegmentsRegId},
     debugger::Debugger,
+    util,
 };
 
 impl SingleThreadBase for Debugger {
@@ -171,7 +176,26 @@ impl SingleRegisterAccess<()> for Debugger {
 }
 
 impl SingleThreadResume for Debugger {
-    fn resume(&mut self, _signal: Option<gdbstub::common::Signal>) -> Result<(), Self::Error> {
+    fn resume(&mut self, _signal: Option<Signal>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn support_single_step(&mut self) -> Option<SingleThreadSingleStepOps<'_, Self>> {
+        Some(self)
+    }
+}
+
+impl SingleThreadSingleStep for Debugger {
+    fn step(&mut self, signal: Option<Signal>) -> Result<(), Self::Error> {
+        debug!("step(signal: {signal:?})");
+
+        let pc = self.last_register_state.rip;
+        let mut code = [0u8; 16];
+        self.read_memory(pc, &mut code)?;
+
+        let next_pc = util::predict_next_pc(pc, &code)?;
+        self.add_tmp_breakpoint_at(next_pc)?;
+
         Ok(())
     }
 }

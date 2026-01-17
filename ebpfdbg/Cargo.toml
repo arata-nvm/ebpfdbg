@@ -25,6 +25,7 @@ nix = { workspace = true, features = ["fs", "process", "resource", "signal", "ui
 which = { workspace = true }
 gdbstub = { workspace = true, features = ["std"] }
 gdbstub_arch = { workspace = true }
+capstone = { workspace = true, features = ["std", "arch_x86"]}
 
 [build-dependencies]
 anyhow = { workspace = true }

@@ -39,6 +39,7 @@ pub struct Debugger {
 
     last_register_state: RegisterState,
     breakpoints: HashMap<u64, UProbeLinkId>,
+    tmp_breakpoints: Vec<UProbeLinkId>,
 }
 
 #[derive(Debug)]
@@ -67,6 +68,7 @@ impl Debugger {
             ebpf,
             last_register_state: Default::default(),
             breakpoints: HashMap::new(),
+            tmp_breakpoints: Vec::new(),
         })
     }
 
@@ -110,6 +112,14 @@ impl Debugger {
         Ok(())
     }
 
+    pub fn add_tmp_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+        let pid = self.pid_raw();
+        let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
+        let link_id = self.ebpf.attach_uprobe_at(target, offset, pid)?;
+        self.tmp_breakpoints.push(link_id);
+        Ok(())
+    }
+
     pub fn remove_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
         let link_id = self
             .breakpoints
@@ -119,10 +129,18 @@ impl Debugger {
         Ok(())
     }
 
+    pub fn remove_tmp_breakpoints(&mut self) -> anyhow::Result<()> {
+        for link_id in self.tmp_breakpoints.drain(..) {
+            self.ebpf.detach_uprobe(link_id)?;
+        }
+        Ok(())
+    }
+
     pub fn continue_exec(&mut self) -> anyhow::Result<StopReason> {
         debug!("continue_exec()");
         signal::kill(self.pid, Signal::SIGCONT)?;
         let status = wait::waitpid(self.pid, Some(WaitPidFlag::WUNTRACED))?;
+        self.remove_tmp_breakpoints()?;
 
         match status {
             WaitStatus::Exited(_, status) => Ok(StopReason::Exited(status as u8)),
