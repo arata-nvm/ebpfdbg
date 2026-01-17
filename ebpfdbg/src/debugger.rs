@@ -15,10 +15,6 @@ use std::{
     path::Path,
 };
 
-use aya::{
-    maps,
-    programs::{UProbe, uprobe::UProbeLinkId},
-};
 use ebpfdbg_common::RegisterState;
 use log::debug;
 use nix::{
@@ -30,13 +26,16 @@ use nix::{
     unistd::{self, ForkResult, Pid},
 };
 
-use crate::proc::find_target_and_offset;
+use crate::{
+    ebpf::{EbpfProgram, UProbeLinkId},
+    proc,
+};
 
 #[derive(Debug)]
 pub struct Debugger {
     exec_file: String,
     pid: Pid,
-    ebpf: aya::Ebpf,
+    ebpf: EbpfProgram,
 
     last_register_state: RegisterState,
     breakpoints: HashMap<u64, UProbeLinkId>,
@@ -51,19 +50,19 @@ pub enum StopReason {
 
 impl Debugger {
     pub fn new(exec_file: impl AsRef<Path>, pid: Pid) -> anyhow::Result<Self> {
-        let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
-            env!("OUT_DIR"),
-            "/ebpfdbg"
-        )))?;
-
-        let uprobe: &mut UProbe = ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
-        uprobe.load()?;
-
-        let exec_file = exec_file.as_ref().canonicalize()?;
-        Ok(Self {
-            exec_file: exec_file.into_os_string().into_string().map_err(|path| {
+        let exec_file = exec_file
+            .as_ref()
+            .canonicalize()?
+            .into_os_string()
+            .into_string()
+            .map_err(|path| {
                 anyhow::anyhow!("failed to convert exec_file path to string: {:?}", path)
-            })?,
+            })?;
+
+        let ebpf = EbpfProgram::load()?;
+
+        Ok(Self {
+            exec_file,
             pid,
             ebpf,
             last_register_state: Default::default(),
@@ -91,27 +90,22 @@ impl Debugger {
         }
     }
 
-    fn pid_raw(&self) -> u32 {
-        self.pid.as_raw() as u32
-    }
-
     pub fn add_breakpoint(&mut self, target: impl AsRef<Path>, func: &str) -> anyhow::Result<()> {
         let pid = self.pid_raw();
-        let uprobe: &mut UProbe = self.ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
-        uprobe.attach(func, target, Some(pid))?;
+        self.ebpf.attach_uprobe(target, func, pid)?;
         Ok(())
     }
 
     pub fn add_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
-        let pid = self.pid_raw();
-        let (target, offset) = find_target_and_offset(self.pid, addr)?;
-        let uprobe: &mut UProbe = self.ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
-        let link_id = uprobe.attach(offset, target, Some(pid))?;
         if self.breakpoints.contains_key(&addr) {
             return Err(anyhow::anyhow!(
                 "breakpoint already set at address {addr:#x}"
             ));
         }
+
+        let pid = self.pid_raw();
+        let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
+        let link_id = self.ebpf.attach_uprobe_at(target, offset, pid)?;
         self.breakpoints.insert(addr, link_id);
         Ok(())
     }
@@ -121,8 +115,7 @@ impl Debugger {
             .breakpoints
             .remove(&addr)
             .ok_or_else(|| anyhow::anyhow!("no breakpoint set at address {addr:#x}"))?;
-        let uprobe: &mut UProbe = self.ebpf.program_mut("ebpfdbg").unwrap().try_into()?;
-        uprobe.detach(link_id)?;
+        self.ebpf.detach_uprobe(link_id)?;
         Ok(())
     }
 
@@ -144,10 +137,7 @@ impl Debugger {
 
     pub fn save_register_state(&mut self) -> anyhow::Result<()> {
         let pid = self.pid_raw();
-        let mut register_states: maps::HashMap<_, u32, RegisterState> =
-            maps::HashMap::try_from(self.ebpf.map_mut("REGISTER_STATES").unwrap())?;
-        self.last_register_state = register_states.get(&pid, 0)?;
-        let _ = register_states.remove(&pid)?;
+        self.last_register_state = self.ebpf.take_register_state(pid)?;
         debug!("Saved register state: {:?}", self.last_register_state);
         Ok(())
     }
@@ -172,5 +162,9 @@ impl Debugger {
         let nwrite = uio::process_vm_writev(self.pid, &[local_iov], &[remote_iov])?;
 
         Ok(nwrite)
+    }
+
+    fn pid_raw(&self) -> u32 {
+        self.pid.as_raw() as u32
     }
 }

@@ -19,14 +19,14 @@ static REGISTER_STATES: HashMap<u32, RegisterState> = HashMap::with_max_entries(
 const SIGSTOP: u32 = 19;
 
 #[uprobe]
-pub fn ebpfdbg(ctx: ProbeContext) -> u32 {
-    match try_ebpfdbg(ctx) {
+pub fn uprobe_handler(ctx: ProbeContext) -> u32 {
+    match try_uprobe_handler(ctx) {
         Ok(ret) => ret,
         Err(ret) => ret,
     }
 }
 
-fn try_ebpfdbg(ctx: ProbeContext) -> Result<u32, u32> {
+fn try_uprobe_handler(ctx: ProbeContext) -> Result<u32, u32> {
     let task: *const task_struct = unsafe { bpf_get_current_task() } as *const task_struct;
     let thread = unsafe { &(*task).thread } as *const thread_struct;
     let es = unsafe { bpf_probe_read_kernel(&(*thread).es) }.map_err(|e| e as u32)?;
