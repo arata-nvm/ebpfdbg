@@ -18,7 +18,6 @@ use log::{debug, warn};
 use crate::{
     arch::{X86_64_SSE_SegmentsRegId, X86_64SegmentsRegId},
     debugger::Debugger,
-    util,
 };
 
 impl SingleThreadBase for Debugger {
@@ -189,13 +188,8 @@ impl SingleThreadSingleStep for Debugger {
     fn step(&mut self, signal: Option<Signal>) -> Result<(), Self::Error> {
         debug!("step(signal: {signal:?})");
 
-        let pc = self.last_register_state.rip;
-        let mut code = [0u8; 16];
-        self.read_memory(pc, &mut code)?;
-
-        let next_pc = util::predict_next_pc(pc, &code)?;
+        let next_pc = self.predict_next_pc()?;
         self.add_tmp_breakpoint_at(next_pc)?;
-
         Ok(())
     }
 }
