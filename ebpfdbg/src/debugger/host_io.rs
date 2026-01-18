@@ -41,7 +41,9 @@ impl HostIoOpen for Debugger {
     ) -> HostIoResult<u32, Self> {
         debug!(
             "open(filename: {:?}, flags: {:?}, mode: {:?})",
-            filename, flags, mode
+            String::from_utf8_lossy(filename),
+            flags,
+            mode
         );
         let flags = OFlag::from_bits(flags.bits() as i32).expect("invalid flags");
         let mode = Mode::from_bits(mode.bits()).expect("invalid mode");
@@ -54,7 +56,10 @@ impl HostIoOpen for Debugger {
 
 impl HostIoReadlink for Debugger {
     fn readlink(&mut self, filename: &[u8], buf: &mut [u8]) -> HostIoResult<usize, Self> {
-        debug!("readlink(filename: {:?})", filename);
+        debug!(
+            "readlink(filename: {:?})",
+            String::from_utf8_lossy(filename),
+        );
         let path = fcntl::readlink(filename).map_err(|e| HostIoError::Errno(map_errno(e)))?;
         let path_bytes = path.as_encoded_bytes();
         let len = buf.len().min(path_bytes.len());
