@@ -273,10 +273,7 @@ mod common {
         let ArchOperand::X86Operand(operand) = operands
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow::anyhow!("call/jump must have operand"))?
-        else {
-            return Err(anyhow::anyhow!("call/jump must have operand"));
-        };
+            .ok_or_else(|| anyhow::anyhow!("call/jump must have operand"))?;
 
         let regs = &debugger.last_register_state;
         match operand.op_type {
