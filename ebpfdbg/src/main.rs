@@ -9,7 +9,7 @@ use gdbstub::{
         GdbStub, SingleThreadStopReason,
         run_blocking::{BlockingEventLoop, Event, WaitForStopReasonError},
     },
-    target::Target,
+    target::{Target, ext::catch_syscalls::CatchSyscallPosition},
 };
 use log::{debug, info};
 use nix::sys::resource::{self, Resource};
@@ -74,6 +74,16 @@ impl BlockingEventLoop for GdbEventLoop {
             StopReason::Exited(status) => SingleThreadStopReason::Exited(status),
             StopReason::Signaled(signal) => SingleThreadStopReason::Signal(Signal(signal as u8)),
             StopReason::SwBreak => SingleThreadStopReason::SwBreak(()),
+            StopReason::SyscallEntry(syscall_num) => SingleThreadStopReason::CatchSyscall {
+                tid: None,
+                number: syscall_num,
+                position: CatchSyscallPosition::Entry,
+            },
+            StopReason::SyscallExit(syscall_num) => SingleThreadStopReason::CatchSyscall {
+                tid: None,
+                number: syscall_num,
+                position: CatchSyscallPosition::Return,
+            },
         };
         Ok(Event::TargetStopped(stop_reason))
     }

@@ -1,5 +1,14 @@
 #![no_std]
 
+pub mod syscall_type {
+    /// Not a syscall
+    pub const NONE: u8 = 0;
+    /// Syscall entry
+    pub const ENTRY: u8 = 1;
+    /// Syscall exit
+    pub const EXIT: u8 = 2;
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RegisterState {
@@ -28,6 +37,7 @@ pub struct RegisterState {
     pub ds: u16,
     pub fsbase: u64,
     pub gsbase: u64,
+    pub syscall_type: u8,
 }
 
 #[cfg(feature = "user")]

@@ -1,6 +1,7 @@
 pub mod auxv;
 pub mod base_ops;
 pub mod breakpoints;
+pub mod catch_syscalls;
 pub mod exec_file;
 pub mod extended_mode;
 pub mod host_io;
@@ -34,7 +35,7 @@ use nix::{
 };
 
 use crate::{
-    ebpf::{EbpfProgram, UProbeLinkId},
+    ebpf::{EbpfProgram, TracePointLinkId, UProbeLinkId},
     proc,
 };
 
@@ -47,6 +48,14 @@ pub struct Debugger {
     last_register_state: RegisterState,
     breakpoints: HashMap<u64, UProbeLinkId>,
     tmp_breakpoints: Vec<UProbeLinkId>,
+    syscall_catch: Option<SyscallCatchState>,
+}
+
+#[derive(Debug)]
+pub struct SyscallCatchState {
+    sys_enter_link: TracePointLinkId,
+    sys_exit_link: TracePointLinkId,
+    syscall_filter: Option<std::collections::HashSet<u64>>,
 }
 
 #[derive(Debug)]
@@ -54,6 +63,8 @@ pub enum StopReason {
     Exited(u8),
     Signaled(Signal),
     SwBreak,
+    SyscallEntry(u64),
+    SyscallExit(u64),
 }
 
 impl Debugger {
@@ -94,6 +105,7 @@ impl Debugger {
             last_register_state: Default::default(),
             breakpoints: HashMap::new(),
             tmp_breakpoints: Vec::new(),
+            syscall_catch: None,
         })
     }
 
@@ -159,6 +171,23 @@ impl Debugger {
             WaitStatus::Signaled(_, signal, _) => Ok(StopReason::Signaled(signal)),
             WaitStatus::Stopped(_, _) => {
                 self.save_register_state()?;
+                if let Some(ref catch_state) = self.syscall_catch {
+                    let syscall_num = self.last_register_state.orig_rax;
+                    let should_catch = catch_state
+                        .syscall_filter
+                        .as_ref()
+                        .map(|filter| filter.contains(&syscall_num))
+                        .unwrap_or(true);
+
+                    if should_catch {
+                        if self.is_syscall_entry() {
+                            return Ok(StopReason::SyscallEntry(syscall_num));
+                        }
+                        if self.is_syscall_exit() {
+                            return Ok(StopReason::SyscallExit(syscall_num));
+                        }
+                    }
+                }
                 Ok(StopReason::SwBreak)
             }
             _ => unimplemented!("{status:?}"),
@@ -250,6 +279,14 @@ impl Debugger {
         } else {
             Ok(fallthrough_pc)
         }
+    }
+
+    fn is_syscall_entry(&self) -> bool {
+        self.last_register_state.syscall_type == ebpfdbg_common::syscall_type::ENTRY
+    }
+
+    fn is_syscall_exit(&self) -> bool {
+        self.last_register_state.syscall_type == ebpfdbg_common::syscall_type::EXIT
     }
 }
 

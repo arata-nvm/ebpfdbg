@@ -13,7 +13,7 @@ use aya_ebpf::{
     maps::HashMap,
     programs::{ProbeContext, TracePointContext},
 };
-use ebpfdbg_common::RegisterState;
+use ebpfdbg_common::{RegisterState, syscall_type};
 use ebpfdbg_ebpf::vmlinux::{task_struct, thread_struct};
 
 #[map]
@@ -59,7 +59,60 @@ fn try_sys_exit_execve_handler(_ctx: TracePointContext) -> Result<u32, u32> {
         return Ok(0);
     }
 
-    let state = collect_register_stage(get_pt_regs())?;
+    let mut state = collect_register_stage(get_pt_regs())?;
+    state.syscall_type = syscall_type::NONE;
+    REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
+
+    unsafe {
+        bpf_send_signal(SIGSTOP);
+    }
+
+    Ok(0)
+}
+
+#[tracepoint]
+pub fn sys_enter_handler(ctx: TracePointContext) -> u32 {
+    match try_sys_enter_handler(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret,
+    }
+}
+
+fn try_sys_enter_handler(_ctx: TracePointContext) -> Result<u32, u32> {
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let target_pid = unsafe { core::ptr::read_volatile(&TARGET_PID) };
+    if pid != target_pid {
+        return Ok(0);
+    }
+
+    let mut state = collect_register_stage(get_pt_regs())?;
+    state.syscall_type = syscall_type::ENTRY;
+    REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
+
+    unsafe {
+        bpf_send_signal(SIGSTOP);
+    }
+
+    Ok(0)
+}
+
+#[tracepoint]
+pub fn sys_exit_handler(ctx: TracePointContext) -> u32 {
+    match try_sys_exit_handler(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret,
+    }
+}
+
+fn try_sys_exit_handler(_ctx: TracePointContext) -> Result<u32, u32> {
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let target_pid = unsafe { core::ptr::read_volatile(&TARGET_PID) };
+    if pid != target_pid {
+        return Ok(0);
+    }
+
+    let mut state = collect_register_stage(get_pt_regs())?;
+    state.syscall_type = syscall_type::EXIT;
     REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
 
     unsafe {
@@ -104,6 +157,7 @@ fn collect_register_stage(regs: *const pt_regs) -> Result<RegisterState, u32> {
         ds,
         fsbase,
         gsbase,
+        syscall_type: syscall_type::NONE,
     };
     Ok(state)
 }

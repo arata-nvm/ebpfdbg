@@ -1,8 +1,9 @@
 use gdbstub::target::{
     Target,
     ext::{
-        auxv::AuxvOps, base::BaseOps, breakpoints::BreakpointsOps, exec_file::ExecFileOps,
-        extended_mode::ExtendedModeOps, host_io::HostIoOps, section_offsets::SectionOffsetsOps,
+        auxv::AuxvOps, base::BaseOps, breakpoints::BreakpointsOps,
+        catch_syscalls::CatchSyscallsOps, exec_file::ExecFileOps, extended_mode::ExtendedModeOps,
+        host_io::HostIoOps, section_offsets::SectionOffsetsOps,
     },
 };
 
@@ -37,6 +38,10 @@ impl Target for Debugger {
     }
 
     fn support_section_offsets(&mut self) -> Option<SectionOffsetsOps<'_, Self>> {
+        Some(self)
+    }
+
+    fn support_catch_syscalls(&mut self) -> Option<CatchSyscallsOps<'_, Self>> {
         Some(self)
     }
 

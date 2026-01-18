@@ -18,6 +18,8 @@ pub struct TracePointLinkId(aya::programs::trace_point::TracePointLinkId);
 
 const PROGRAM_UPROBE_HANDLER: &str = "uprobe_handler";
 const PROGRAM_SYS_EXIT_EXECVE_HANDLER: &str = "sys_exit_execve_handler";
+const PROGRAM_SYS_ENTER_HANDLER: &str = "sys_enter_handler";
+const PROGRAM_SYS_EXIT_HANDLER: &str = "sys_exit_handler";
 const MAP_REGISTER_STATES: &str = "REGISTER_STATES";
 const GLOBAL_TARGET_PID: &str = "TARGET_PID";
 
@@ -33,6 +35,8 @@ impl EbpfProgram {
         let mut this = EbpfProgram(ebpf);
         this.get_uprobe_handler()?.load()?;
         this.get_sys_exit_execve_handler()?.load()?;
+        this.get_sys_enter_handler()?.load()?;
+        this.get_sys_exit_handler()?.load()?;
         Ok(this)
     }
 
@@ -88,6 +92,46 @@ impl EbpfProgram {
         Ok(self
             .0
             .program_mut(PROGRAM_SYS_EXIT_EXECVE_HANDLER)
+            .unwrap()
+            .try_into()?)
+    }
+
+    pub fn attach_sys_enter(&mut self) -> anyhow::Result<TracePointLinkId> {
+        let tracepoint = self.get_sys_enter_handler()?;
+        let link_id = tracepoint.attach("raw_syscalls", "sys_enter")?;
+        Ok(TracePointLinkId(link_id))
+    }
+
+    pub fn detach_sys_enter(&mut self, link_id: TracePointLinkId) -> anyhow::Result<()> {
+        let tracepoint = self.get_sys_enter_handler()?;
+        tracepoint.detach(link_id.0)?;
+        Ok(())
+    }
+
+    fn get_sys_enter_handler(&mut self) -> anyhow::Result<&mut TracePoint> {
+        Ok(self
+            .0
+            .program_mut(PROGRAM_SYS_ENTER_HANDLER)
+            .unwrap()
+            .try_into()?)
+    }
+
+    pub fn attach_sys_exit(&mut self) -> anyhow::Result<TracePointLinkId> {
+        let tracepoint = self.get_sys_exit_handler()?;
+        let link_id = tracepoint.attach("raw_syscalls", "sys_exit")?;
+        Ok(TracePointLinkId(link_id))
+    }
+
+    pub fn detach_sys_exit(&mut self, link_id: TracePointLinkId) -> anyhow::Result<()> {
+        let tracepoint = self.get_sys_exit_handler()?;
+        tracepoint.detach(link_id.0)?;
+        Ok(())
+    }
+
+    fn get_sys_exit_handler(&mut self) -> anyhow::Result<&mut TracePoint> {
+        Ok(self
+            .0
+            .program_mut(PROGRAM_SYS_EXIT_HANDLER)
             .unwrap()
             .try_into()?)
     }
