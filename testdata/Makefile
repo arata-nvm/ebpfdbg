@@ -1,4 +1,4 @@
 CFLAGS = -Wall -Wextra -Werror -g
 
 .PHONY: build
-build: prog1
+build: prog1 fork
