@@ -22,7 +22,6 @@ tokio = { workspace = true, features = [
 ] }
 clap = { workspace = true, features = ["derive", "help", "usage"] }
 nix = { workspace = true, features = ["fs", "process", "resource", "signal", "uio"] }
-which = { workspace = true }
 gdbstub = { workspace = true, features = ["std"] }
 gdbstub_arch = { workspace = true }
 capstone = { workspace = true, features = ["std", "arch_x86"]}

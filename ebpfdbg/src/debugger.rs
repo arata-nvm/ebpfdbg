@@ -53,32 +53,10 @@ pub struct Debugger {
 pub enum StopReason {
     Exited(u8),
     Signaled(Signal),
-    Stopped(Signal),
+    SwBreak,
 }
 
 impl Debugger {
-    pub fn new(exec_file: impl AsRef<Path>, pid: Pid) -> anyhow::Result<Self> {
-        let exec_file = exec_file
-            .as_ref()
-            .canonicalize()?
-            .into_os_string()
-            .into_string()
-            .map_err(|path| {
-                anyhow::anyhow!("failed to convert exec_file path to string: {:?}", path)
-            })?;
-
-        let ebpf = EbpfProgram::load()?;
-
-        Ok(Self {
-            exec_file,
-            pid,
-            ebpf,
-            last_register_state: Default::default(),
-            breakpoints: HashMap::new(),
-            tmp_breakpoints: Vec::new(),
-        })
-    }
-
     pub fn launch(exec_file: impl AsRef<Path>, args: Vec<String>) -> anyhow::Result<Self> {
         let exec_file = exec_file.as_ref();
         match unsafe { unistd::fork() }? {
@@ -97,6 +75,33 @@ impl Debugger {
             }
             ForkResult::Parent { child } => Self::new(exec_file, child),
         }
+    }
+
+    fn new(exec_file: impl AsRef<Path>, pid: Pid) -> anyhow::Result<Self> {
+        let exec_file = exec_file
+            .as_ref()
+            .canonicalize()?
+            .into_os_string()
+            .into_string()
+            .map_err(|path| {
+                anyhow::anyhow!("failed to convert exec_file path to string: {:?}", path)
+            })?;
+
+        Ok(Self {
+            exec_file,
+            pid,
+            ebpf: EbpfProgram::load(pid.as_raw())?,
+            last_register_state: Default::default(),
+            breakpoints: HashMap::new(),
+            tmp_breakpoints: Vec::new(),
+        })
+    }
+
+    pub fn continue_to_start(&mut self) -> anyhow::Result<()> {
+        let link_id = self.ebpf.attach_sys_exit_execve()?;
+        self.continue_exec()?;
+        self.ebpf.detach_sys_exit_execve(link_id)?;
+        Ok(())
     }
 
     pub fn add_breakpoint(&mut self, target: impl AsRef<Path>, func: &str) -> anyhow::Result<()> {
@@ -152,9 +157,9 @@ impl Debugger {
         match status {
             WaitStatus::Exited(_, status) => Ok(StopReason::Exited(status as u8)),
             WaitStatus::Signaled(_, signal, _) => Ok(StopReason::Signaled(signal)),
-            WaitStatus::Stopped(_, signal) => {
+            WaitStatus::Stopped(_, _) => {
                 self.save_register_state()?;
-                Ok(StopReason::Stopped(signal))
+                Ok(StopReason::SwBreak)
             }
             _ => unimplemented!("{status:?}"),
         }

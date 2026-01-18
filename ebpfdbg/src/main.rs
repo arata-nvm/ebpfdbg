@@ -1,7 +1,4 @@
-use std::{
-    net::{TcpListener, TcpStream},
-    path::PathBuf,
-};
+use std::net::{TcpListener, TcpStream};
 
 use clap::Parser;
 use ebpfdbg::debugger::{Debugger, StopReason};
@@ -16,16 +13,10 @@ use gdbstub::{
 };
 use log::{debug, info};
 use nix::sys::resource::{self, Resource};
-use which::which;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Opt {
-    #[arg(short, long)]
-    target: Option<String>,
-    #[arg(short, long)]
-    func: Vec<String>,
-
     program: String,
     #[arg(allow_hyphen_values = true)]
     args: Vec<String>,
@@ -47,23 +38,10 @@ async fn main() -> anyhow::Result<()> {
         debug!("remove limit on locked memory failed, err is: {e}");
     }
 
-    let Opt {
-        target,
-        func,
-        program,
-        args,
-    } = opt;
-
-    let target = match target {
-        Some(target) => PathBuf::from(target),
-        None => which(&program)?,
-    };
+    let Opt { program, args } = opt;
 
     let mut debugger = Debugger::launch(program, args)?;
-    for f in func {
-        debugger.add_breakpoint(&target, &f)?;
-    }
-    let _ = debugger.continue_exec();
+    debugger.continue_to_start()?;
 
     let conn = wait_for_tcp(9001)?;
     let gdbstub = GdbStub::new(conn);
@@ -95,7 +73,7 @@ impl BlockingEventLoop for GdbEventLoop {
         {
             StopReason::Exited(status) => SingleThreadStopReason::Exited(status),
             StopReason::Signaled(signal) => SingleThreadStopReason::Signal(Signal(signal as u8)),
-            StopReason::Stopped(signal) => SingleThreadStopReason::Signal(Signal(signal as u8)),
+            StopReason::SwBreak => SingleThreadStopReason::SwBreak(()),
         };
         Ok(Event::TargetStopped(stop_reason))
     }

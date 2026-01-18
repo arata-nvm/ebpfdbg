@@ -305,7 +305,6 @@ dependencies = [
  "log",
  "nix",
  "tokio",
- "which",
 ]
 
 [[package]]

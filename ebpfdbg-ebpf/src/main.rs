@@ -2,19 +2,25 @@
 #![no_main]
 
 use aya_ebpf::{
+    bindings::pt_regs,
     helpers::{
         bpf_get_current_pid_tgid, bpf_probe_read_kernel,
-        generated::{bpf_get_current_task, bpf_send_signal},
+        generated::{
+            bpf_get_current_task, bpf_get_current_task_btf, bpf_send_signal, bpf_task_pt_regs,
+        },
     },
-    macros::{map, uprobe},
+    macros::{map, tracepoint, uprobe},
     maps::HashMap,
-    programs::ProbeContext,
+    programs::{ProbeContext, TracePointContext},
 };
 use ebpfdbg_common::RegisterState;
 use ebpfdbg_ebpf::vmlinux::{task_struct, thread_struct};
 
 #[map]
 static REGISTER_STATES: HashMap<u32, RegisterState> = HashMap::with_max_entries(1024, 0);
+
+#[unsafe(no_mangle)]
+static TARGET_PID: u32 = 0;
 
 const SIGSTOP: u32 = 19;
 
@@ -26,14 +32,52 @@ pub fn uprobe_handler(ctx: ProbeContext) -> u32 {
     }
 }
 
-fn try_uprobe_handler(ctx: ProbeContext) -> Result<u32, u32> {
-    let task: *const task_struct = unsafe { bpf_get_current_task() } as *const task_struct;
+fn try_uprobe_handler(_ctx: ProbeContext) -> Result<u32, u32> {
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let state = collect_register_stage(get_pt_regs())?;
+    REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
+
+    unsafe {
+        bpf_send_signal(SIGSTOP);
+    }
+
+    Ok(0)
+}
+
+#[tracepoint]
+pub fn sys_exit_execve_handler(ctx: TracePointContext) -> u32 {
+    match try_sys_exit_execve_handler(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret,
+    }
+}
+
+fn try_sys_exit_execve_handler(_ctx: TracePointContext) -> Result<u32, u32> {
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let target_pid = unsafe { core::ptr::read_volatile(&TARGET_PID) };
+    if pid != target_pid {
+        return Ok(0);
+    }
+
+    let state = collect_register_stage(get_pt_regs())?;
+    REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
+
+    unsafe {
+        bpf_send_signal(SIGSTOP);
+    }
+
+    Ok(0)
+}
+
+fn collect_register_stage(regs: *const pt_regs) -> Result<RegisterState, u32> {
+    let task = unsafe { bpf_get_current_task() } as *const task_struct;
     let thread = unsafe { &(*task).thread } as *const thread_struct;
     let es = unsafe { bpf_probe_read_kernel(&(*thread).es) }.map_err(|e| e as u32)?;
     let ds = unsafe { bpf_probe_read_kernel(&(*thread).ds) }.map_err(|e| e as u32)?;
     let fsbase = unsafe { bpf_probe_read_kernel(&(*thread).fsbase) }.map_err(|e| e as u32)?;
     let gsbase = unsafe { bpf_probe_read_kernel(&(*thread).gsbase) }.map_err(|e| e as u32)?;
-    let regs = unsafe { *ctx.regs };
+
+    let regs = unsafe { *regs };
     let state = RegisterState {
         r15: regs.r15,
         r14: regs.r14,
@@ -61,15 +105,13 @@ fn try_uprobe_handler(ctx: ProbeContext) -> Result<u32, u32> {
         fsbase,
         gsbase,
     };
+    Ok(state)
+}
 
-    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
-    REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
-
-    unsafe {
-        bpf_send_signal(SIGSTOP);
-    }
-
-    Ok(0)
+fn get_pt_regs() -> *const pt_regs {
+    let task = unsafe { bpf_get_current_task_btf() };
+    let regs = unsafe { bpf_task_pt_regs(task) } as *const pt_regs;
+    regs
 }
 
 #[cfg(not(test))]

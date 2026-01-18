@@ -1,6 +1,10 @@
 use std::path::Path;
 
-use aya::{Ebpf, maps::HashMap, programs::UProbe};
+use aya::{
+    Ebpf, EbpfLoader,
+    maps::HashMap,
+    programs::{TracePoint, UProbe},
+};
 use ebpfdbg_common::RegisterState;
 
 #[derive(Debug)]
@@ -9,20 +13,26 @@ pub struct EbpfProgram(Ebpf);
 #[derive(Debug)]
 pub struct UProbeLinkId(aya::programs::uprobe::UProbeLinkId);
 
+#[derive(Debug)]
+pub struct TracePointLinkId(aya::programs::trace_point::TracePointLinkId);
+
 const PROGRAM_UPROBE_HANDLER: &str = "uprobe_handler";
+const PROGRAM_SYS_EXIT_EXECVE_HANDLER: &str = "sys_exit_execve_handler";
 const MAP_REGISTER_STATES: &str = "REGISTER_STATES";
+const GLOBAL_TARGET_PID: &str = "TARGET_PID";
 
 impl EbpfProgram {
-    pub fn load() -> anyhow::Result<Self> {
-        let ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
-            env!("OUT_DIR"),
-            "/ebpfdbg"
-        )))?;
+    pub fn load(target_pid: i32) -> anyhow::Result<Self> {
+        let ebpf = EbpfLoader::new()
+            .override_global(GLOBAL_TARGET_PID, &target_pid, true)
+            .load(aya::include_bytes_aligned!(concat!(
+                env!("OUT_DIR"),
+                "/ebpfdbg"
+            )))?;
 
         let mut this = EbpfProgram(ebpf);
-        let uprobe = this.get_uprobe_handler()?;
-        uprobe.load()?;
-
+        this.get_uprobe_handler()?.load()?;
+        this.get_sys_exit_execve_handler()?.load()?;
         Ok(this)
     }
 
@@ -58,6 +68,26 @@ impl EbpfProgram {
         Ok(self
             .0
             .program_mut(PROGRAM_UPROBE_HANDLER)
+            .unwrap()
+            .try_into()?)
+    }
+
+    pub fn attach_sys_exit_execve(&mut self) -> anyhow::Result<TracePointLinkId> {
+        let tracepoint = self.get_sys_exit_execve_handler()?;
+        let link_id = tracepoint.attach("syscalls", "sys_exit_execve")?;
+        Ok(TracePointLinkId(link_id))
+    }
+
+    pub fn detach_sys_exit_execve(&mut self, link_id: TracePointLinkId) -> anyhow::Result<()> {
+        let tracepoint = self.get_sys_exit_execve_handler()?;
+        tracepoint.detach(link_id.0)?;
+        Ok(())
+    }
+
+    fn get_sys_exit_execve_handler(&mut self) -> anyhow::Result<&mut TracePoint> {
+        Ok(self
+            .0
+            .program_mut(PROGRAM_SYS_EXIT_EXECVE_HANDLER)
             .unwrap()
             .try_into()?)
     }
