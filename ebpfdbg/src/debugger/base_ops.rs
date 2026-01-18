@@ -169,8 +169,9 @@ impl SingleRegisterAccess<()> for Debugger {
         val: &[u8],
     ) -> TargetResult<(), Self> {
         debug!("write_register(reg_id: {:?}, val: {:x?})", reg_id, val);
-
-        unimplemented!();
+        // FIXME
+        // Err(TargetError::NonFatal)
+        Ok(())
     }
 }
 
