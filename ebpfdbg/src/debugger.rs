@@ -518,3 +518,125 @@ mod common {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::common;
+    use ebpfdbg_common::RegisterState;
+
+    fn regs_with_flags(eflags: u64) -> RegisterState {
+        RegisterState {
+            eflags,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn check_jump_condition_unconditional() {
+        let regs = regs_with_flags(0);
+        assert!(common::check_jump_condition("jmp", &regs));
+        assert!(common::check_jump_condition("ljmp", &regs));
+    }
+
+    #[test]
+    fn check_jump_condition_with_zf() {
+        // ZF set
+        let regs_zf_set = regs_with_flags(0x0040);
+        assert!(common::check_jump_condition("je", &regs_zf_set));
+        assert!(common::check_jump_condition("jz", &regs_zf_set));
+        assert!(!common::check_jump_condition("jne", &regs_zf_set));
+        assert!(!common::check_jump_condition("jnz", &regs_zf_set));
+
+        // !ZF
+        let regs_zf_clear = regs_with_flags(0);
+        assert!(!common::check_jump_condition("je", &regs_zf_clear));
+        assert!(!common::check_jump_condition("jz", &regs_zf_clear));
+        assert!(common::check_jump_condition("jne", &regs_zf_clear));
+        assert!(common::check_jump_condition("jnz", &regs_zf_clear));
+    }
+
+    #[test]
+    fn check_jump_condition_with_cf() {
+        // CF
+        let regs_cf_set = regs_with_flags(0x0001);
+        assert!(common::check_jump_condition("jb", &regs_cf_set));
+        assert!(common::check_jump_condition("jnae", &regs_cf_set));
+        assert!(common::check_jump_condition("jc", &regs_cf_set));
+        assert!(!common::check_jump_condition("jnb", &regs_cf_set));
+        assert!(!common::check_jump_condition("jae", &regs_cf_set));
+        assert!(!common::check_jump_condition("jnc", &regs_cf_set));
+
+        // !CF
+        let regs_cf_clear = regs_with_flags(0);
+        assert!(!common::check_jump_condition("jb", &regs_cf_clear));
+        assert!(!common::check_jump_condition("jnae", &regs_cf_clear));
+        assert!(!common::check_jump_condition("jc", &regs_cf_clear));
+        assert!(common::check_jump_condition("jnb", &regs_cf_clear));
+        assert!(common::check_jump_condition("jae", &regs_cf_clear));
+        assert!(common::check_jump_condition("jnc", &regs_cf_clear));
+    }
+
+    #[test]
+    fn check_jump_condition_with_zf_sf_of() {
+        // ZF and SF = OF: greater-than
+        let regs_gt = regs_with_flags(0x0000);
+        assert!(common::check_jump_condition("jg", &regs_gt));
+        assert!(common::check_jump_condition("jnle", &regs_gt));
+        assert!(!common::check_jump_condition("jle", &regs_gt));
+        assert!(!common::check_jump_condition("jng", &regs_gt));
+
+        // ZF: equal / less-or-equal
+        let regs_eq = regs_with_flags(0x0040);
+        assert!(common::check_jump_condition("jle", &regs_eq));
+        assert!(common::check_jump_condition("jng", &regs_eq));
+        assert!(!common::check_jump_condition("jg", &regs_eq));
+        assert!(!common::check_jump_condition("jnle", &regs_eq));
+
+        // SF != OF: less-than
+        let regs_lt = regs_with_flags(0x0080); // SF set, OF clear
+        assert!(common::check_jump_condition("jl", &regs_lt));
+        assert!(common::check_jump_condition("jnge", &regs_lt));
+        assert!(!common::check_jump_condition("jge", &regs_lt));
+        assert!(!common::check_jump_condition("jnl", &regs_lt));
+    }
+
+    #[test]
+    fn check_jump_condition_with_pf() {
+        // PF
+        let regs_pf_set = regs_with_flags(0x0004);
+        assert!(common::check_jump_condition("jp", &regs_pf_set));
+        assert!(common::check_jump_condition("jpe", &regs_pf_set));
+        assert!(!common::check_jump_condition("jnp", &regs_pf_set));
+        assert!(!common::check_jump_condition("jpo", &regs_pf_set));
+
+        // !PF
+        let regs_pf_clear = regs_with_flags(0);
+        assert!(!common::check_jump_condition("jp", &regs_pf_clear));
+        assert!(!common::check_jump_condition("jpe", &regs_pf_clear));
+        assert!(common::check_jump_condition("jnp", &regs_pf_clear));
+        assert!(common::check_jump_condition("jpo", &regs_pf_clear));
+    }
+
+    #[test]
+    fn check_jump_condition_with_of() {
+        // OF
+        let regs_of_set = regs_with_flags(0x0800);
+        assert!(common::check_jump_condition("jo", &regs_of_set));
+        assert!(!common::check_jump_condition("jno", &regs_of_set));
+
+        // !OF
+        let regs_of_clear = regs_with_flags(0);
+        assert!(!common::check_jump_condition("jo", &regs_of_clear));
+        assert!(common::check_jump_condition("jno", &regs_of_clear));
+    }
+
+    #[test]
+    fn check_jump_condition_with_rcx() {
+        let mut regs = regs_with_flags(0);
+        regs.rcx = 0;
+        assert!(common::check_jump_condition("jrcxz", &regs));
+
+        regs.rcx = 1;
+        assert!(!common::check_jump_condition("jrcxz", &regs));
+    }
+}
