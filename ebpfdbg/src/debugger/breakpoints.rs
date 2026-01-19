@@ -101,7 +101,7 @@ impl HwWatchpoint for Debugger {
             "add_hw_watchpoint(addr: {:x}, len: {}, kind: {:?})",
             addr, len, kind
         );
-        match self.add_hw_watchpoint_at(addr, len, kind) {
+        match self.add_hw_watchpoint_at(addr, len, kind.into()) {
             Ok(_) => Ok(true),
             Err(err) => {
                 warn!(
@@ -123,7 +123,7 @@ impl HwWatchpoint for Debugger {
             "remove_hw_watchpoint(addr: {:x}, len: {}, kind: {:?})",
             addr, len, kind
         );
-        match self.remove_hw_watchpoint_at(addr, len, kind) {
+        match self.remove_hw_watchpoint_at(addr, len, kind.into()) {
             Ok(_) => Ok(true),
             Err(err) => {
                 warn!(

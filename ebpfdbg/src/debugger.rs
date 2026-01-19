@@ -9,7 +9,7 @@ pub mod section_offsets;
 pub mod target;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{CString, c_uint},
     io::{IoSlice, IoSliceMut},
     os::unix::ffi::OsStrExt,
@@ -214,12 +214,12 @@ impl Debugger {
         &mut self,
         addr: u64,
         len: u64,
-        kind: gdbstub::target::ext::breakpoints::WatchKind,
+        kind: WatchKind,
     ) -> anyhow::Result<()> {
         let key = WatchpointKey {
             addr,
             len,
-            kind: kind.into(),
+            kind: kind,
         };
         if self.hw_watchpoints.contains_key(&key) {
             return Err(anyhow::anyhow!(
@@ -237,7 +237,7 @@ impl Debugger {
         &mut self,
         addr: u64,
         len: u64,
-        kind: gdbstub::target::ext::breakpoints::WatchKind,
+        kind: WatchKind,
     ) -> anyhow::Result<()> {
         let key = WatchpointKey {
             addr,
@@ -265,6 +265,36 @@ impl Debugger {
         for link_id in self.tmp_breakpoints.drain(..) {
             self.ebpf.detach_uprobe(link_id)?;
         }
+        Ok(())
+    }
+
+    pub fn enable_syscall_catch(
+        &mut self,
+        syscall_filter: Option<HashSet<u64>>,
+    ) -> anyhow::Result<()> {
+        if let Some(catch_state) = self.syscall_catch.take() {
+            self.ebpf.detach_sys_enter(catch_state.sys_enter_link)?;
+            self.ebpf.detach_sys_exit(catch_state.sys_exit_link)?;
+        }
+
+        let sys_enter_link = self.ebpf.attach_sys_enter()?;
+        let sys_exit_link = self.ebpf.attach_sys_exit()?;
+
+        self.syscall_catch = Some(SyscallCatchState {
+            sys_enter_link,
+            sys_exit_link,
+            syscall_filter,
+        });
+
+        Ok(())
+    }
+
+    pub fn disable_syscall_catch(&mut self) -> anyhow::Result<()> {
+        if let Some(catch_state) = self.syscall_catch.take() {
+            self.ebpf.detach_sys_enter(catch_state.sys_enter_link)?;
+            self.ebpf.detach_sys_exit(catch_state.sys_exit_link)?;
+        }
+
         Ok(())
     }
 
