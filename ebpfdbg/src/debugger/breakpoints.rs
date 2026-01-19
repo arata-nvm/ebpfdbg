@@ -3,7 +3,8 @@ use gdbstub::{
     target::{
         TargetError, TargetResult,
         ext::breakpoints::{
-            Breakpoints, HwBreakpoint, HwBreakpointOps, SwBreakpoint, SwBreakpointOps,
+            Breakpoints, HwBreakpoint, HwBreakpointOps, HwWatchpoint, HwWatchpointOps,
+            SwBreakpoint, SwBreakpointOps, WatchKind,
         },
     },
 };
@@ -17,6 +18,10 @@ impl Breakpoints for Debugger {
     }
 
     fn support_hw_breakpoint(&mut self) -> Option<HwBreakpointOps<'_, Self>> {
+        Some(self)
+    }
+
+    fn support_hw_watchpoint(&mut self) -> Option<HwWatchpointOps<'_, Self>> {
         Some(self)
     }
 }
@@ -79,6 +84,52 @@ impl HwBreakpoint for Debugger {
             Ok(_) => Ok(true),
             Err(err) => {
                 warn!("failed to remove hw breakpoint at {:#x}: {:?}", addr, err);
+                Err(TargetError::NonFatal)
+            }
+        }
+    }
+}
+
+impl HwWatchpoint for Debugger {
+    fn add_hw_watchpoint(
+        &mut self,
+        addr: <Self::Arch as Arch>::Usize,
+        len: <Self::Arch as Arch>::Usize,
+        kind: WatchKind,
+    ) -> TargetResult<bool, Self> {
+        debug!(
+            "add_hw_watchpoint(addr: {:x}, len: {}, kind: {:?})",
+            addr, len, kind
+        );
+        match self.add_hw_watchpoint_at(addr, len, kind) {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                warn!(
+                    "failed to add hw watchpoint at {:#x} len {} kind {:?}: {:?}",
+                    addr, len, kind, err
+                );
+                Err(TargetError::NonFatal)
+            }
+        }
+    }
+
+    fn remove_hw_watchpoint(
+        &mut self,
+        addr: <Self::Arch as Arch>::Usize,
+        len: <Self::Arch as Arch>::Usize,
+        kind: WatchKind,
+    ) -> TargetResult<bool, Self> {
+        debug!(
+            "remove_hw_watchpoint(addr: {:x}, len: {}, kind: {:?})",
+            addr, len, kind
+        );
+        match self.remove_hw_watchpoint_at(addr, len, kind) {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                warn!(
+                    "failed to remove hw watchpoint at {:#x} len {} kind {:?}: {:?}",
+                    addr, len, kind, err
+                );
                 Err(TargetError::NonFatal)
             }
         }

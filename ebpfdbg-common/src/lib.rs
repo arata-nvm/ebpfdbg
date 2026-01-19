@@ -38,6 +38,7 @@ pub struct RegisterState {
     pub fsbase: u64,
     pub gsbase: u64,
     pub syscall_type: u8,
+    pub perf_event_addr: u64,
 }
 
 #[cfg(feature = "user")]

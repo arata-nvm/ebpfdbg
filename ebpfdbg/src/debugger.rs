@@ -49,7 +49,42 @@ pub struct Debugger {
     sw_breakpoints: HashMap<u64, UProbeLinkId>,
     tmp_breakpoints: Vec<UProbeLinkId>,
     hw_breakpoints: HashMap<u64, PerfEventLinkId>,
+    hw_watchpoints: HashMap<WatchpointKey, PerfEventLinkId>,
     syscall_catch: Option<SyscallCatchState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct WatchpointKey {
+    addr: u64,
+    len: u64,
+    kind: WatchKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WatchKind {
+    Write,
+    Read,
+    ReadWrite,
+}
+
+impl From<gdbstub::target::ext::breakpoints::WatchKind> for WatchKind {
+    fn from(kind: gdbstub::target::ext::breakpoints::WatchKind) -> Self {
+        match kind {
+            gdbstub::target::ext::breakpoints::WatchKind::Write => WatchKind::Write,
+            gdbstub::target::ext::breakpoints::WatchKind::Read => WatchKind::Read,
+            gdbstub::target::ext::breakpoints::WatchKind::ReadWrite => WatchKind::ReadWrite,
+        }
+    }
+}
+
+impl From<WatchKind> for gdbstub::target::ext::breakpoints::WatchKind {
+    fn from(kind: WatchKind) -> Self {
+        match kind {
+            WatchKind::Write => gdbstub::target::ext::breakpoints::WatchKind::Write,
+            WatchKind::Read => gdbstub::target::ext::breakpoints::WatchKind::Read,
+            WatchKind::ReadWrite => gdbstub::target::ext::breakpoints::WatchKind::ReadWrite,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -65,6 +100,7 @@ pub enum StopReason {
     Signaled(Signal),
     SwBreak,
     HwBreak,
+    Watch { kind: WatchKind, addr: u64 },
     SyscallEntry(u64),
     SyscallExit(u64),
 }
@@ -108,6 +144,7 @@ impl Debugger {
             sw_breakpoints: HashMap::new(),
             hw_breakpoints: HashMap::new(),
             tmp_breakpoints: Vec::new(),
+            hw_watchpoints: HashMap::new(),
             syscall_catch: None,
         })
     }
@@ -173,6 +210,48 @@ impl Debugger {
         Ok(())
     }
 
+    pub fn add_hw_watchpoint_at(
+        &mut self,
+        addr: u64,
+        len: u64,
+        kind: gdbstub::target::ext::breakpoints::WatchKind,
+    ) -> anyhow::Result<()> {
+        let key = WatchpointKey {
+            addr,
+            len,
+            kind: kind.into(),
+        };
+        if self.hw_watchpoints.contains_key(&key) {
+            return Err(anyhow::anyhow!(
+                "hardware watchpoint already set at address {addr:#x} len {len} kind {kind:?}"
+            ));
+        }
+
+        let pid = self.pid_raw();
+        let link_id = self.ebpf.attach_watchpoint(addr, len, kind.into(), pid)?;
+        self.hw_watchpoints.insert(key, link_id);
+        Ok(())
+    }
+
+    pub fn remove_hw_watchpoint_at(
+        &mut self,
+        addr: u64,
+        len: u64,
+        kind: gdbstub::target::ext::breakpoints::WatchKind,
+    ) -> anyhow::Result<()> {
+        let key = WatchpointKey {
+            addr,
+            len,
+            kind: kind.into(),
+        };
+        let link_id = self
+            .hw_watchpoints
+            .remove(&key)
+            .ok_or_else(|| anyhow::anyhow!("no hardware watchpoint set at {addr:#x}"))?;
+        self.ebpf.detach_perf_event(link_id)?;
+        Ok(())
+    }
+
     pub fn remove_hw_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
         let link_id = self
             .hw_breakpoints
@@ -201,6 +280,8 @@ impl Debugger {
             WaitStatus::Stopped(_, _) => {
                 self.save_register_state()?;
                 let pc = self.last_register_state.rip;
+                let perf_event_addr = self.last_register_state.perf_event_addr;
+
                 if let Some(ref catch_state) = self.syscall_catch {
                     let syscall_num = self.last_register_state.orig_rax;
                     let should_catch = catch_state
@@ -220,6 +301,23 @@ impl Debugger {
                 }
                 if self.hw_breakpoints.contains_key(&pc) {
                     return Ok(StopReason::HwBreak);
+                }
+                if let Some((kind, addr)) = self
+                    .hw_watchpoints
+                    .iter()
+                    .filter_map(|(key, _)| {
+                        let start_addr = key.addr;
+                        let end_addr = start_addr.saturating_add(key.len);
+                        let in_range = start_addr <= perf_event_addr && perf_event_addr < end_addr;
+                        in_range.then_some((key.kind, perf_event_addr))
+                    })
+                    .max_by_key(|(kind, _)| match kind {
+                        WatchKind::ReadWrite => 3,
+                        WatchKind::Write => 2,
+                        WatchKind::Read => 1,
+                    })
+                {
+                    return Ok(StopReason::Watch { kind, addr });
                 }
                 if self.sw_breakpoints.contains_key(&pc) {
                     return Ok(StopReason::SwBreak);

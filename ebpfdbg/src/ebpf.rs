@@ -5,10 +5,15 @@ use aya::{
     maps::HashMap,
     programs::{
         PerfEvent, TracePoint, UProbe,
-        perf_event::{BreakpointConfig, PerfEventConfig, PerfEventScope, SamplePolicy},
+        perf_event::{
+            BreakpointConfig, PerfBreakpointLength, PerfBreakpointType, PerfEventConfig,
+            PerfEventScope, SamplePolicy,
+        },
     },
 };
 use ebpfdbg_common::RegisterState;
+
+use crate::debugger::WatchKind;
 
 #[derive(Debug)]
 pub struct EbpfProgram(Ebpf);
@@ -63,6 +68,46 @@ impl EbpfProgram {
         let perf = self.get_perf_event_handler()?;
         let link_id = perf.attach(
             PerfEventConfig::Breakpoint(BreakpointConfig::Instruction { address: addr }),
+            PerfEventScope::OneProcess { pid, cpu: None },
+            SamplePolicy::Period(1),
+            false,
+        )?;
+        Ok(PerfEventLinkId(link_id))
+    }
+
+    pub fn attach_watchpoint(
+        &mut self,
+        addr: u64,
+        len: u64,
+        kind: WatchKind,
+        pid: u32,
+    ) -> anyhow::Result<PerfEventLinkId> {
+        let perf = self.get_perf_event_handler()?;
+
+        let r#type = match kind {
+            WatchKind::Write => PerfBreakpointType::Write,
+            WatchKind::Read => PerfBreakpointType::Read,
+            WatchKind::ReadWrite => PerfBreakpointType::ReadWrite,
+        };
+
+        let length = match len {
+            1 => PerfBreakpointLength::Len1,
+            2 => PerfBreakpointLength::Len2,
+            4 => PerfBreakpointLength::Len4,
+            8 => PerfBreakpointLength::Len8,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "unsupported watchpoint length {len} (supported: 1,2,4,8)"
+                ));
+            }
+        };
+
+        let link_id = perf.attach(
+            PerfEventConfig::Breakpoint(BreakpointConfig::Data {
+                r#type,
+                address: addr,
+                length,
+            }),
             PerfEventScope::OneProcess { pid, cpu: None },
             SamplePolicy::Period(1),
             false,

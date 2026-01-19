@@ -75,6 +75,11 @@ impl BlockingEventLoop for GdbEventLoop {
             StopReason::Signaled(signal) => SingleThreadStopReason::Signal(Signal(signal as u8)),
             StopReason::SwBreak => SingleThreadStopReason::SwBreak(()),
             StopReason::HwBreak => SingleThreadStopReason::HwBreak(()),
+            StopReason::Watch { kind, addr } => SingleThreadStopReason::Watch {
+                tid: (),
+                kind: kind.into(),
+                addr,
+            },
             StopReason::SyscallEntry(syscall_num) => SingleThreadStopReason::CatchSyscall {
                 tid: None,
                 number: syscall_num,

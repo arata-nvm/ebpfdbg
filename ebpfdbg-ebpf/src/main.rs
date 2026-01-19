@@ -52,14 +52,16 @@ pub fn perf_event_handler(ctx: PerfEventContext) -> u32 {
     }
 }
 
-fn try_perf_event_handler(_ctx: PerfEventContext) -> Result<u32, u32> {
+fn try_perf_event_handler(ctx: PerfEventContext) -> Result<u32, u32> {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
     let target_pid = unsafe { core::ptr::read_volatile(&TARGET_PID) };
     if pid != target_pid {
         return Ok(0);
     }
 
-    let state = collect_register_stage(get_pt_regs())?;
+    let perf_event_addr = unsafe { (*ctx.ctx).addr };
+    let mut state = collect_register_stage(get_pt_regs())?;
+    state.perf_event_addr = perf_event_addr;
     REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
 
     unsafe {
@@ -183,6 +185,7 @@ fn collect_register_stage(regs: *const pt_regs) -> Result<RegisterState, u32> {
         fsbase,
         gsbase,
         syscall_type: syscall_type::NONE,
+        perf_event_addr: 0,
     };
     Ok(state)
 }
