@@ -35,7 +35,7 @@ use nix::{
 };
 
 use crate::{
-    ebpf::{EbpfProgram, TracePointLinkId, UProbeLinkId},
+    ebpf::{EbpfProgram, PerfEventLinkId, TracePointLinkId, UProbeLinkId},
     proc,
 };
 
@@ -46,8 +46,9 @@ pub struct Debugger {
     ebpf: EbpfProgram,
 
     last_register_state: RegisterState,
-    breakpoints: HashMap<u64, UProbeLinkId>,
+    sw_breakpoints: HashMap<u64, UProbeLinkId>,
     tmp_breakpoints: Vec<UProbeLinkId>,
+    hw_breakpoints: HashMap<u64, PerfEventLinkId>,
     syscall_catch: Option<SyscallCatchState>,
 }
 
@@ -63,6 +64,7 @@ pub enum StopReason {
     Exited(u8),
     Signaled(Signal),
     SwBreak,
+    HwBreak,
     SyscallEntry(u64),
     SyscallExit(u64),
 }
@@ -103,7 +105,8 @@ impl Debugger {
             pid,
             ebpf: EbpfProgram::load(pid.as_raw())?,
             last_register_state: Default::default(),
-            breakpoints: HashMap::new(),
+            sw_breakpoints: HashMap::new(),
+            hw_breakpoints: HashMap::new(),
             tmp_breakpoints: Vec::new(),
             syscall_catch: None,
         })
@@ -116,14 +119,18 @@ impl Debugger {
         Ok(())
     }
 
-    pub fn add_breakpoint(&mut self, target: impl AsRef<Path>, func: &str) -> anyhow::Result<()> {
+    pub fn add_sw_breakpoint(
+        &mut self,
+        target: impl AsRef<Path>,
+        func: &str,
+    ) -> anyhow::Result<()> {
         let pid = self.pid_raw();
         self.ebpf.attach_uprobe(target, func, pid)?;
         Ok(())
     }
 
-    pub fn add_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
-        if self.breakpoints.contains_key(&addr) {
+    pub fn add_sw_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+        if self.sw_breakpoints.contains_key(&addr) {
             return Err(anyhow::anyhow!(
                 "breakpoint already set at address {addr:#x}"
             ));
@@ -132,11 +139,11 @@ impl Debugger {
         let pid = self.pid_raw();
         let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
         let link_id = self.ebpf.attach_uprobe_at(target, offset, pid)?;
-        self.breakpoints.insert(addr, link_id);
+        self.sw_breakpoints.insert(addr, link_id);
         Ok(())
     }
 
-    pub fn add_tmp_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+    pub fn add_tmp_sw_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
         let pid = self.pid_raw();
         let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
         let link_id = self.ebpf.attach_uprobe_at(target, offset, pid)?;
@@ -144,12 +151,34 @@ impl Debugger {
         Ok(())
     }
 
-    pub fn remove_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+    pub fn remove_sw_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
         let link_id = self
-            .breakpoints
+            .sw_breakpoints
             .remove(&addr)
             .ok_or_else(|| anyhow::anyhow!("no breakpoint set at address {addr:#x}"))?;
         self.ebpf.detach_uprobe(link_id)?;
+        Ok(())
+    }
+
+    pub fn add_hw_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+        if self.hw_breakpoints.contains_key(&addr) {
+            return Err(anyhow::anyhow!(
+                "hardware breakpoint already set at address {addr:#x}"
+            ));
+        }
+
+        let pid = self.pid_raw();
+        let link_id = self.ebpf.attach_perf_event(addr, pid)?;
+        self.hw_breakpoints.insert(addr, link_id);
+        Ok(())
+    }
+
+    pub fn remove_hw_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
+        let link_id = self
+            .hw_breakpoints
+            .remove(&addr)
+            .ok_or_else(|| anyhow::anyhow!("no hardware breakpoint set at address {addr:#x}"))?;
+        self.ebpf.detach_perf_event(link_id)?;
         Ok(())
     }
 
@@ -171,6 +200,7 @@ impl Debugger {
             WaitStatus::Signaled(_, signal, _) => Ok(StopReason::Signaled(signal)),
             WaitStatus::Stopped(_, _) => {
                 self.save_register_state()?;
+                let pc = self.last_register_state.rip;
                 if let Some(ref catch_state) = self.syscall_catch {
                     let syscall_num = self.last_register_state.orig_rax;
                     let should_catch = catch_state
@@ -187,6 +217,12 @@ impl Debugger {
                             return Ok(StopReason::SyscallExit(syscall_num));
                         }
                     }
+                }
+                if self.hw_breakpoints.contains_key(&pc) {
+                    return Ok(StopReason::HwBreak);
+                }
+                if self.sw_breakpoints.contains_key(&pc) {
+                    return Ok(StopReason::SwBreak);
                 }
                 Ok(StopReason::SwBreak)
             }

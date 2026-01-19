@@ -3,7 +3,10 @@ use std::path::Path;
 use aya::{
     Ebpf, EbpfLoader,
     maps::HashMap,
-    programs::{TracePoint, UProbe},
+    programs::{
+        PerfEvent, TracePoint, UProbe,
+        perf_event::{BreakpointConfig, PerfEventConfig, PerfEventScope, SamplePolicy},
+    },
 };
 use ebpfdbg_common::RegisterState;
 
@@ -14,9 +17,13 @@ pub struct EbpfProgram(Ebpf);
 pub struct UProbeLinkId(aya::programs::uprobe::UProbeLinkId);
 
 #[derive(Debug)]
+pub struct PerfEventLinkId(aya::programs::perf_event::PerfEventLinkId);
+
+#[derive(Debug)]
 pub struct TracePointLinkId(aya::programs::trace_point::TracePointLinkId);
 
 const PROGRAM_UPROBE_HANDLER: &str = "uprobe_handler";
+const PROGRAM_PERF_EVENT_HANDLER: &str = "perf_event_handler";
 const PROGRAM_SYS_EXIT_EXECVE_HANDLER: &str = "sys_exit_execve_handler";
 const PROGRAM_SYS_ENTER_HANDLER: &str = "sys_enter_handler";
 const PROGRAM_SYS_EXIT_HANDLER: &str = "sys_exit_handler";
@@ -34,6 +41,7 @@ impl EbpfProgram {
 
         let mut this = EbpfProgram(ebpf);
         this.get_uprobe_handler()?.load()?;
+        this.get_perf_event_handler()?.load()?;
         this.get_sys_exit_execve_handler()?.load()?;
         this.get_sys_enter_handler()?.load()?;
         this.get_sys_exit_handler()?.load()?;
@@ -49,6 +57,23 @@ impl EbpfProgram {
         let uprobe = self.get_uprobe_handler()?;
         let link_id = uprobe.attach(func, target, Some(pid))?;
         Ok(UProbeLinkId(link_id))
+    }
+
+    pub fn attach_perf_event(&mut self, addr: u64, pid: u32) -> anyhow::Result<PerfEventLinkId> {
+        let perf = self.get_perf_event_handler()?;
+        let link_id = perf.attach(
+            PerfEventConfig::Breakpoint(BreakpointConfig::Instruction { address: addr }),
+            PerfEventScope::OneProcess { pid, cpu: None },
+            SamplePolicy::Period(1),
+            false,
+        )?;
+        Ok(PerfEventLinkId(link_id))
+    }
+
+    pub fn detach_perf_event(&mut self, link_id: PerfEventLinkId) -> anyhow::Result<()> {
+        let perf = self.get_perf_event_handler()?;
+        perf.detach(link_id.0)?;
+        Ok(())
     }
 
     pub fn attach_uprobe_at(
@@ -72,6 +97,14 @@ impl EbpfProgram {
         Ok(self
             .0
             .program_mut(PROGRAM_UPROBE_HANDLER)
+            .unwrap()
+            .try_into()?)
+    }
+
+    fn get_perf_event_handler(&mut self) -> anyhow::Result<&mut PerfEvent> {
+        Ok(self
+            .0
+            .program_mut(PROGRAM_PERF_EVENT_HANDLER)
             .unwrap()
             .try_into()?)
     }

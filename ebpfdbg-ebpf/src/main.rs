@@ -9,9 +9,9 @@ use aya_ebpf::{
             bpf_get_current_task, bpf_get_current_task_btf, bpf_send_signal, bpf_task_pt_regs,
         },
     },
-    macros::{map, tracepoint, uprobe},
+    macros::{map, perf_event, tracepoint, uprobe},
     maps::HashMap,
-    programs::{ProbeContext, TracePointContext},
+    programs::{PerfEventContext, ProbeContext, TracePointContext},
 };
 use ebpfdbg_common::{RegisterState, syscall_type};
 use ebpfdbg_ebpf::vmlinux::{task_struct, thread_struct};
@@ -34,6 +34,31 @@ pub fn uprobe_handler(ctx: ProbeContext) -> u32 {
 
 fn try_uprobe_handler(_ctx: ProbeContext) -> Result<u32, u32> {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let state = collect_register_stage(get_pt_regs())?;
+    REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
+
+    unsafe {
+        bpf_send_signal(SIGSTOP);
+    }
+
+    Ok(0)
+}
+
+#[perf_event]
+pub fn perf_event_handler(ctx: PerfEventContext) -> u32 {
+    match try_perf_event_handler(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret,
+    }
+}
+
+fn try_perf_event_handler(_ctx: PerfEventContext) -> Result<u32, u32> {
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let target_pid = unsafe { core::ptr::read_volatile(&TARGET_PID) };
+    if pid != target_pid {
+        return Ok(0);
+    }
+
     let state = collect_register_stage(get_pt_regs())?;
     REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
 

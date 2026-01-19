@@ -190,7 +190,7 @@ impl SingleThreadSingleStep for Debugger {
         debug!("step(signal: {signal:?})");
 
         let next_pc = self.predict_next_pc()?;
-        self.add_tmp_breakpoint_at(next_pc)?;
+        self.add_tmp_sw_breakpoint_at(next_pc)?;
         Ok(())
     }
 }
