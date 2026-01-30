@@ -1,0 +1,3 @@
+[submodule "gdbstub"]
+	path = gdbstub
+	url = git@github.com:arata-nvm/gdbstub.git
