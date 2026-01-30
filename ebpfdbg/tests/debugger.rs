@@ -55,17 +55,6 @@ fn debugger_continue_exec() {
 }
 
 #[test]
-fn debugger_add_sw_breakpoint() {
-    let (bin, mut dbg) = launch_testprog_debugger();
-
-    dbg.add_sw_breakpoint(&bin, "inner_function")
-        .expect("failed to set software breakpoint on inner_function");
-
-    let stop = dbg.continue_exec().expect("continue_exec failed");
-    assert!(matches!(stop, StopReason::SwBreak), "got {stop:?}");
-}
-
-#[test]
 fn debugger_add_remove_sw_breakpoint_at() {
     let (bin, mut dbg) = launch_testprog_debugger();
     let inner_addr = nm_symbol_addr(&bin, "inner_function");
@@ -140,6 +129,21 @@ fn debugger_add_remove_hw_watchpoint_at() {
 #[test]
 fn debugger_step() {
     let (_, mut dbg) = launch_testprog_debugger();
+
+    dbg.step(None).expect("step failed");
+    let stop = dbg.continue_exec().expect("continue_exec failed");
+    assert!(matches!(stop, StopReason::SwBreak), "got {stop:?}");
+}
+
+#[test]
+fn debugger_step_after_sw_breakpoint() {
+    let (bin, mut dbg) = launch_testprog_debugger();
+    let inner_addr = nm_symbol_addr(&bin, "inner_function");
+
+    dbg.add_sw_breakpoint_at(inner_addr)
+        .expect("add_sw_breakpoint_at failed");
+    let stop = dbg.continue_exec().expect("continue_exec failed");
+    assert!(matches!(stop, StopReason::SwBreak), "got {stop:?}");
 
     dbg.step(None).expect("step failed");
     let stop = dbg.continue_exec().expect("continue_exec failed");
