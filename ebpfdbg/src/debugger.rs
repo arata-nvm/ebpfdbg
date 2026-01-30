@@ -10,7 +10,7 @@ pub mod target;
 use std::{
     collections::{HashMap, HashSet},
     ffi::{CString, c_uint},
-    io::{IoSlice, IoSliceMut},
+    io::{IoSlice, IoSliceMut, Read, Seek, SeekFrom},
     os::unix::ffi::OsStrExt,
     path::Path,
 };
@@ -397,10 +397,28 @@ impl Debugger {
         self.pid.as_raw() as u32
     }
 
+    fn read_instruction_bytes(&self, addr: u64) -> anyhow::Result<[u8; 16]> {
+        let mut code = [0u8; 16];
+        let at_sw_breakpoint = self.sw_breakpoints.contains_key(&addr)
+            || self.pending_sw_detach.contains_key(&addr)
+            || self.tmp_breakpoints.iter().any(|(a, _)| *a == addr);
+        if at_sw_breakpoint {
+            let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
+            let mut file = std::fs::File::open(&target)?;
+            file.seek(SeekFrom::Start(offset))?;
+            let n = file.read(&mut code)?;
+            if n < 16 {
+                code[n..].fill(0);
+            }
+        } else {
+            self.read_memory(addr, &mut code)?;
+        }
+        Ok(code)
+    }
+
     fn predict_next_pc(&self) -> anyhow::Result<u64> {
         let pc = self.last_register_state.rip;
-        let mut code = [0u8; 16];
-        self.read_memory(pc, &mut code)?;
+        let code = self.read_instruction_bytes(pc)?;
 
         let cs = Capstone::new()
             .x86()
