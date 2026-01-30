@@ -82,7 +82,7 @@ impl SingleThreadBase for Debugger {
         );
 
         self.read_memory(start_addr, data).map_err(|e| {
-            warn!("failed to read memory at {:x}: {:?}", start_addr, e);
+            debug!("failed to read memory at {:x}: {:?}", start_addr, e);
             TargetError::NonFatal
         })
     }
