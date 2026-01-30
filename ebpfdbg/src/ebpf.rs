@@ -34,7 +34,9 @@ const PROGRAM_SYS_ENTER_HANDLER: &str = "sys_enter_handler";
 const PROGRAM_SYS_EXIT_HANDLER: &str = "sys_exit_handler";
 const MAP_REGISTER_STATES: &str = "REGISTER_STATES";
 const GLOBAL_TARGET_PID: &str = "TARGET_PID";
+const MAP_SYSCALL_FILTER: &str = "SYSCALL_FILTER";
 const MAP_ACTIVE_SW_BREAKPOINTS: &str = "ACTIVE_SW_BREAKPOINTS";
+const SYSCALL_FILTER_CATCH_ALL: u64 = u64::MAX;
 
 impl EbpfProgram {
     pub fn load(target_pid: i32) -> anyhow::Result<Self> {
@@ -234,6 +236,32 @@ impl EbpfProgram {
         let mut map: HashMap<_, u64, u8> =
             HashMap::try_from(self.0.map_mut(MAP_ACTIVE_SW_BREAKPOINTS).unwrap())?;
         map.remove(&addr)?;
+        Ok(())
+    }
+
+    pub fn update_syscall_filter(
+        &mut self,
+        filter: Option<&std::collections::HashSet<u64>>,
+    ) -> anyhow::Result<()> {
+        let mut syscall_filter: HashMap<_, u64, u8> =
+            HashMap::try_from(self.0.map_mut(MAP_SYSCALL_FILTER).unwrap())?;
+
+        let keys: Vec<_> = syscall_filter.keys().filter_map(|it| it.ok()).collect();
+        for key in keys {
+            syscall_filter.remove(&key)?;
+        }
+
+        match filter {
+            None => {
+                syscall_filter.insert(SYSCALL_FILTER_CATCH_ALL, 1u8, 0)?;
+            }
+            Some(set) => {
+                for &num in set {
+                    syscall_filter.insert(num, 1u8, 0)?;
+                }
+            }
+        }
+
         Ok(())
     }
 }

@@ -20,12 +20,16 @@ use ebpfdbg_ebpf::vmlinux::{task_struct, thread_struct};
 static REGISTER_STATES: HashMap<u32, RegisterState> = HashMap::with_max_entries(1024, 0);
 
 #[map]
+static SYSCALL_FILTER: HashMap<u64, u8> = HashMap::with_max_entries(1024, 0);
+
+#[map]
 static ACTIVE_SW_BREAKPOINTS: HashMap<u64, u8> = HashMap::with_max_entries(1024, 0);
 
 #[unsafe(no_mangle)]
 static TARGET_PID: u32 = 0;
 
 const SIGSTOP: u32 = 19;
+const SYSCALL_FILTER_CATCH_ALL: u64 = u64::MAX;
 
 #[uprobe]
 pub fn uprobe_handler(ctx: ProbeContext) -> u32 {
@@ -121,7 +125,15 @@ fn try_sys_enter_handler(_ctx: TracePointContext) -> Result<u32, u32> {
         return Ok(0);
     }
 
-    let mut state = collect_register_stage(get_pt_regs())?;
+    let regs_ptr = get_pt_regs();
+    let regs = unsafe { *regs_ptr };
+    let syscall_num = regs.orig_rax as u64;
+
+    if !should_catch_syscall(syscall_num)? {
+        return Ok(0);
+    }
+
+    let mut state = collect_register_stage(regs_ptr)?;
     state.syscall_type = syscall_type::ENTRY;
     REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
 
@@ -147,7 +159,15 @@ fn try_sys_exit_handler(_ctx: TracePointContext) -> Result<u32, u32> {
         return Ok(0);
     }
 
-    let mut state = collect_register_stage(get_pt_regs())?;
+    let regs_ptr = get_pt_regs();
+    let regs = unsafe { *regs_ptr };
+    let syscall_num = regs.orig_rax as u64;
+
+    if !should_catch_syscall(syscall_num)? {
+        return Ok(0);
+    }
+
+    let mut state = collect_register_stage(regs_ptr)?;
     state.syscall_type = syscall_type::EXIT;
     REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
 
@@ -203,6 +223,14 @@ fn get_pt_regs() -> *const pt_regs {
     let task = unsafe { bpf_get_current_task_btf() };
     let regs = unsafe { bpf_task_pt_regs(task) } as *const pt_regs;
     regs
+}
+
+fn should_catch_syscall(syscall_num: u64) -> Result<bool, u32> {
+    if unsafe { SYSCALL_FILTER.get(&SYSCALL_FILTER_CATCH_ALL) }.is_some() {
+        return Ok(true);
+    }
+
+    Ok(unsafe { SYSCALL_FILTER.get(&syscall_num) }.is_some())
 }
 
 #[cfg(not(test))]

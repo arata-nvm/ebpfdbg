@@ -272,9 +272,13 @@ impl Debugger {
         &mut self,
         syscall_filter: Option<HashSet<u64>>,
     ) -> anyhow::Result<()> {
-        if let Some(catch_state) = self.syscall_catch.take() {
-            self.ebpf.detach_sys_enter(catch_state.sys_enter_link)?;
-            self.ebpf.detach_sys_exit(catch_state.sys_exit_link)?;
+        self.ebpf
+            .update_syscall_filter(syscall_filter.as_ref())
+            .map_err(|e| anyhow::anyhow!("failed to update eBPF syscall filter: {:?}", e))?;
+
+        if let Some(ref mut catch_state) = self.syscall_catch {
+            catch_state.syscall_filter = syscall_filter;
+            return Ok(());
         }
 
         let sys_enter_link = self.ebpf.attach_sys_enter()?;
@@ -290,11 +294,10 @@ impl Debugger {
     }
 
     pub fn disable_syscall_catch(&mut self) -> anyhow::Result<()> {
-        if let Some(catch_state) = self.syscall_catch.take() {
-            self.ebpf.detach_sys_enter(catch_state.sys_enter_link)?;
-            self.ebpf.detach_sys_exit(catch_state.sys_exit_link)?;
+        self.ebpf.update_syscall_filter(Some(&HashSet::new()))?;
+        if let Some(ref mut catch_state) = self.syscall_catch {
+            catch_state.syscall_filter = Some(HashSet::new());
         }
-
         Ok(())
     }
 
