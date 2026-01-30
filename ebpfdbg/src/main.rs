@@ -4,7 +4,7 @@ use clap::Parser;
 use ebpfdbg::debugger::{Debugger, StopReason};
 use gdbstub::{
     common::Signal,
-    conn::Connection,
+    conn::{BufferedConnection, Connection},
     stub::{
         GdbStub, SingleThreadStopReason,
         run_blocking::{BlockingEventLoop, Event, WaitForStopReasonError},
@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     debugger.continue_to_start()?;
 
     let conn = wait_for_tcp(9001)?;
-    let gdbstub = GdbStub::new(conn);
+    let gdbstub = GdbStub::new(BufferedConnection::new(conn));
     gdbstub.run_blocking::<GdbEventLoop>(&mut debugger)?;
 
     Ok(())
@@ -54,7 +54,7 @@ enum GdbEventLoop {}
 
 impl BlockingEventLoop for GdbEventLoop {
     type Target = Debugger;
-    type Connection = TcpStream;
+    type Connection = BufferedConnection<TcpStream>;
     type StopReason = SingleThreadStopReason<u64>;
 
     fn wait_for_stop_reason(

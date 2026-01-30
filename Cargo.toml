@@ -29,8 +29,8 @@ log = { version = "0.4.22", default-features = false }
 tokio = { version = "1.40.0", default-features = false }
 which = { version = "6.0.0", default-features = false }
 nix = { version = "0.30.1", default-features = false }
-gdbstub = { version = "0.7.8", default-features = false }
-gdbstub_arch = { version = "0.3.2", default-features = false }
+gdbstub = { path = "./gdbstub", default-features = false }
+gdbstub_arch = { path = "./gdbstub/gdbstub_arch", default-features = false }
 capstone = { version = "0.14.0", default-features = false }
 
 [profile.release.package.ebpfdbg-ebpf]
