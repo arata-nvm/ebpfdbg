@@ -5,7 +5,6 @@ pub mod catch_syscalls;
 pub mod exec_file;
 pub mod extended_mode;
 pub mod host_io;
-pub mod section_offsets;
 pub mod target;
 
 use std::{

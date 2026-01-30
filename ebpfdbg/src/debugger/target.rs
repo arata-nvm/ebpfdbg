@@ -3,7 +3,7 @@ use gdbstub::target::{
     ext::{
         auxv::AuxvOps, base::BaseOps, breakpoints::BreakpointsOps,
         catch_syscalls::CatchSyscallsOps, exec_file::ExecFileOps, extended_mode::ExtendedModeOps,
-        host_io::HostIoOps, section_offsets::SectionOffsetsOps,
+        host_io::HostIoOps,
     },
 };
 
@@ -34,10 +34,6 @@ impl Target for Debugger {
     }
 
     fn support_host_io(&mut self) -> Option<HostIoOps<'_, Self>> {
-        Some(self)
-    }
-
-    fn support_section_offsets(&mut self) -> Option<SectionOffsetsOps<'_, Self>> {
         Some(self)
     }
 
