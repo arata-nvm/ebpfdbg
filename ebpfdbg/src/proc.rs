@@ -1,10 +1,14 @@
 use std::{
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
+    sync::{Mutex, OnceLock},
 };
 
 use log::debug;
 use nix::unistd::Pid;
+
+static PROC_MAP_CACHE: OnceLock<Mutex<HashMap<i32, Vec<Mapping>>>> = OnceLock::new();
 
 #[derive(Debug)]
 struct Mapping {
@@ -17,15 +21,46 @@ struct Mapping {
 
 pub(crate) fn find_target_and_offset(pid: Pid, addr: u64) -> anyhow::Result<(String, u64)> {
     debug!("looking for address {addr:x} in /proc/{pid}/maps");
-    let mappings = parse_proc_map(pid)?;
+
+    let pid_raw = pid.as_raw();
+    let cache = PROC_MAP_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    {
+        let cache_guard = cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock PROC_MAP_CACHE"))?;
+
+        if let Some(mappings) = cache_guard.get(&pid_raw) {
+            if let Some(mapping) = mappings
+                .iter()
+                .find(|m| m.start_addr <= addr && addr < m.end_addr)
+            {
+                debug!("found address {addr:x} in cached mapping: {:x?}", mapping);
+                let offset = addr - mapping.start_addr + mapping.offset;
+                return Ok((mapping.target.clone(), offset));
+            }
+        }
+    }
+
+    let fresh_mappings = parse_proc_map(pid)?;
+
+    let mut cache_guard = cache
+        .lock()
+        .map_err(|_| anyhow::anyhow!("failed to lock PROC_MAP_CACHE"))?;
+    cache_guard.insert(pid_raw, fresh_mappings);
+
+    let mappings = cache_guard
+        .get(&pid_raw)
+        .expect("mappings must exist after insertion");
+
     let mapping = mappings
-        .into_iter()
+        .iter()
         .find(|m| m.start_addr <= addr && addr < m.end_addr)
         .ok_or_else(|| anyhow::anyhow!("address {addr:x} not found in /proc/{pid}/maps"))?;
 
     debug!("found address {addr:x} in mapping: {:x?}", mapping);
     let offset = addr - mapping.start_addr + mapping.offset;
-    Ok((mapping.target, offset))
+    Ok((mapping.target.clone(), offset))
 }
 
 pub(crate) fn find_text_data_segment_bases(
