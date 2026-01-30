@@ -34,6 +34,7 @@ const PROGRAM_SYS_ENTER_HANDLER: &str = "sys_enter_handler";
 const PROGRAM_SYS_EXIT_HANDLER: &str = "sys_exit_handler";
 const MAP_REGISTER_STATES: &str = "REGISTER_STATES";
 const GLOBAL_TARGET_PID: &str = "TARGET_PID";
+const MAP_ACTIVE_SW_BREAKPOINTS: &str = "ACTIVE_SW_BREAKPOINTS";
 
 impl EbpfProgram {
     pub fn load(target_pid: i32) -> anyhow::Result<Self> {
@@ -220,5 +221,19 @@ impl EbpfProgram {
         let last_register_state = register_states.get(&pid, 0)?;
         register_states.remove(&pid)?;
         Ok(last_register_state)
+    }
+
+    pub fn insert_active_sw_breakpoint(&mut self, addr: u64) -> anyhow::Result<()> {
+        let mut map: HashMap<_, u64, u8> =
+            HashMap::try_from(self.0.map_mut(MAP_ACTIVE_SW_BREAKPOINTS).unwrap())?;
+        map.insert(addr, 1u8, 0)?;
+        Ok(())
+    }
+
+    pub fn remove_active_sw_breakpoint(&mut self, addr: u64) -> anyhow::Result<()> {
+        let mut map: HashMap<_, u64, u8> =
+            HashMap::try_from(self.0.map_mut(MAP_ACTIVE_SW_BREAKPOINTS).unwrap())?;
+        map.remove(&addr)?;
+        Ok(())
     }
 }

@@ -19,6 +19,9 @@ use ebpfdbg_ebpf::vmlinux::{task_struct, thread_struct};
 #[map]
 static REGISTER_STATES: HashMap<u32, RegisterState> = HashMap::with_max_entries(1024, 0);
 
+#[map]
+static ACTIVE_SW_BREAKPOINTS: HashMap<u64, u8> = HashMap::with_max_entries(1024, 0);
+
 #[unsafe(no_mangle)]
 static TARGET_PID: u32 = 0;
 
@@ -33,8 +36,14 @@ pub fn uprobe_handler(ctx: ProbeContext) -> u32 {
 }
 
 fn try_uprobe_handler(_ctx: ProbeContext) -> Result<u32, u32> {
+    let regs = get_pt_regs();
+    let rip = unsafe { (*regs).rip };
+    if unsafe { ACTIVE_SW_BREAKPOINTS.get(&rip) }.is_none() {
+        return Ok(0);
+    }
+
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
-    let state = collect_register_stage(get_pt_regs())?;
+    let state = collect_register_stage(regs)?;
     REGISTER_STATES.insert(&pid, state, 0).map_err(|_| 1u32)?;
 
     unsafe {

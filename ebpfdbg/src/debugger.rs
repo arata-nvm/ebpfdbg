@@ -46,7 +46,8 @@ pub struct Debugger {
 
     last_register_state: RegisterState,
     sw_breakpoints: HashMap<u64, UProbeLinkId>,
-    tmp_breakpoints: Vec<UProbeLinkId>,
+    pending_sw_detach: HashMap<u64, UProbeLinkId>,
+    tmp_breakpoints: Vec<(u64, UProbeLinkId)>,
     hw_breakpoints: HashMap<u64, PerfEventLinkId>,
     hw_watchpoints: HashMap<WatchpointKey, PerfEventLinkId>,
     syscall_catch: Option<SyscallCatchState>,
@@ -141,6 +142,7 @@ impl Debugger {
             ebpf: EbpfProgram::load(pid.as_raw())?,
             last_register_state: Default::default(),
             sw_breakpoints: HashMap::new(),
+            pending_sw_detach: HashMap::new(),
             hw_breakpoints: HashMap::new(),
             tmp_breakpoints: Vec::new(),
             hw_watchpoints: HashMap::new(),
@@ -155,16 +157,6 @@ impl Debugger {
         Ok(())
     }
 
-    pub fn add_sw_breakpoint(
-        &mut self,
-        target: impl AsRef<Path>,
-        func: &str,
-    ) -> anyhow::Result<()> {
-        let pid = self.pid_raw();
-        self.ebpf.attach_uprobe(target, func, pid)?;
-        Ok(())
-    }
-
     pub fn add_sw_breakpoint_at(&mut self, addr: u64) -> anyhow::Result<()> {
         if self.sw_breakpoints.contains_key(&addr) {
             return Err(anyhow::anyhow!(
@@ -172,9 +164,15 @@ impl Debugger {
             ));
         }
 
-        let pid = self.pid_raw();
-        let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
-        let link_id = self.ebpf.attach_uprobe_at(target, offset, pid)?;
+        let link_id = if let Some(link_id) = self.pending_sw_detach.remove(&addr) {
+            link_id
+        } else {
+            let pid = self.pid_raw();
+            let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
+            self.ebpf.attach_uprobe_at(target, offset, pid)?
+        };
+
+        self.ebpf.insert_active_sw_breakpoint(addr)?;
         self.sw_breakpoints.insert(addr, link_id);
         Ok(())
     }
@@ -183,7 +181,8 @@ impl Debugger {
         let pid = self.pid_raw();
         let (target, offset) = proc::find_target_and_offset(self.pid, addr)?;
         let link_id = self.ebpf.attach_uprobe_at(target, offset, pid)?;
-        self.tmp_breakpoints.push(link_id);
+        self.ebpf.insert_active_sw_breakpoint(addr)?;
+        self.tmp_breakpoints.push((addr, link_id));
         Ok(())
     }
 
@@ -192,7 +191,8 @@ impl Debugger {
             .sw_breakpoints
             .remove(&addr)
             .ok_or_else(|| anyhow::anyhow!("no breakpoint set at address {addr:#x}"))?;
-        self.ebpf.detach_uprobe(link_id)?;
+        self.ebpf.remove_active_sw_breakpoint(addr)?;
+        self.pending_sw_detach.insert(addr, link_id);
         Ok(())
     }
 
@@ -261,7 +261,8 @@ impl Debugger {
     }
 
     pub fn remove_tmp_breakpoints(&mut self) -> anyhow::Result<()> {
-        for link_id in self.tmp_breakpoints.drain(..) {
+        for (addr, link_id) in self.tmp_breakpoints.drain(..) {
+            self.ebpf.remove_active_sw_breakpoint(addr)?;
             self.ebpf.detach_uprobe(link_id)?;
         }
         Ok(())
